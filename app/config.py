@@ -1,0 +1,51 @@
+"""Configuration and environment variables for The Warden."""
+
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    # App settings
+    app_name: str = "The Warden"
+    debug: bool = False
+
+    # Auth
+    api_key: str = "change-me-in-production"
+
+    # Telegram
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""  # Your personal chat ID
+    telegram_webhook_url: str = ""  # e.g., https://your-app.railway.app/webhook/telegram
+
+    # OpenRouter
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemini-flash-1.5"  # Cheap and fast
+
+    # Database
+    database_url: str = "sqlite+aiosqlite:///./warden.db"
+
+    # Timezone
+    timezone: str = "America/Phoenix"
+
+    # Check-in schedule (24h format)
+    daily_checkin_hour: int = 4
+    daily_checkin_minute: int = 15
+    weekly_review_day: str = "sun"  # Day of week
+    weekly_review_hour: int = 18
+    weekly_review_minute: int = 0
+
+    # Escalation
+    silence_threshold_hours: int = 18
+    deadline_alert_hours: int = 48
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings()
