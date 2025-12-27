@@ -4,12 +4,14 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
 from app.config import get_settings
 from app.database import init_db
 from app.auth import verify_api_key
 from app.scheduler import setup_scheduler, shutdown_scheduler, daily_checkin_job
 from app.routers import goals, commitments, checkins, webhook
 from app.models import ManualCheckInRequest
+from app.dashboard_html import DASHBOARD_HTML
 
 # Configure logging
 logging.basicConfig(
@@ -59,9 +61,21 @@ app.include_router(checkins.router, prefix="/api")
 app.include_router(webhook.router)
 
 
-@app.get("/")
+@app.get("/", response_class=RedirectResponse)
 async def root():
-    """Root endpoint."""
+    """Redirect to dashboard."""
+    return RedirectResponse(url="/dashboard")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """Serve the HTML dashboard."""
+    return HTMLResponse(content=DASHBOARD_HTML)
+
+
+@app.get("/api/status")
+async def api_status():
+    """API status endpoint."""
     return {
         "name": "The Warden",
         "status": "watching",
