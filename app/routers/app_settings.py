@@ -228,3 +228,13 @@ async def get_chat_history(
         )
         for m in reversed(messages)  # Return in chronological order
     ]
+
+
+@router.get("/streaks")
+async def get_streaks(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get current streak information."""
+    from app.streaks import get_streak_context
+    return await get_streak_context(db)

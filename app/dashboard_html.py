@@ -460,8 +460,8 @@ DASHBOARD_HTML = """
                 <div class="metrics-grid">
                     <div class="metric-card success"><div class="metric-label">Completion Rate</div><div class="metric-value" id="metric-completion">--%</div></div>
                     <div class="metric-card warning"><div class="metric-label">Pending Tasks</div><div class="metric-value" id="metric-pending">--</div></div>
-                    <div class="metric-card info"><div class="metric-label">Response Rate</div><div class="metric-value" id="metric-response">--%</div></div>
-                    <div class="metric-card"><div class="metric-label">Avg Response Time</div><div class="metric-value" id="metric-avg-time">--</div></div>
+                    <div class="metric-card info"><div class="metric-label">Response Streak</div><div class="metric-value" id="metric-response-streak">--</div><div class="metric-label" style="margin-top:4px;font-size:11px;" id="streak-response-best"></div></div>
+                    <div class="metric-card"><div class="metric-label">Completion Streak</div><div class="metric-value" id="metric-completion-streak">--</div><div class="metric-label" style="margin-top:4px;font-size:11px;" id="streak-completion-best"></div></div>
                 </div>
 
                 <div class="grid-3">
@@ -635,11 +635,23 @@ DASHBOARD_HTML = """
 
         async function loadDashboard() {
             const stats = await api('GET', '/checkins/stats');
+            const streaks = await api('GET', '/settings/streaks');
+
             if (!stats) return;
             document.getElementById('metric-completion').textContent = (stats.completion_rate * 100).toFixed(0) + '%';
             document.getElementById('metric-pending').textContent = stats.pending_commitments;
-            document.getElementById('metric-response').textContent = (stats.response_rate * 100).toFixed(0) + '%';
-            document.getElementById('metric-avg-time').textContent = stats.average_response_time_hours ? stats.average_response_time_hours.toFixed(1) + 'h' : 'N/A';
+
+            // Display streaks
+            if (streaks) {
+                const respStreak = streaks.response_streak || {};
+                const compStreak = streaks.completion_streak || {};
+
+                document.getElementById('metric-response-streak').textContent = respStreak.current || 0;
+                document.getElementById('streak-response-best').textContent = respStreak.best > 0 ? `Best: ${respStreak.best} days` : '';
+
+                document.getElementById('metric-completion-streak').textContent = compStreak.current || 0;
+                document.getElementById('streak-completion-best').textContent = compStreak.best > 0 ? `Best: ${compStreak.best} weeks` : '';
+            }
 
             document.getElementById('patterns-list').innerHTML = stats.active_patterns.length
                 ? stats.active_patterns.map(p => `<div class="pattern-item ${p.severity >= 4 ? '' : p.severity >= 2 ? 'medium' : 'low'}"><div class="pattern-type">${p.pattern_type}</div><div class="pattern-desc">${p.description}</div></div>`).join('')

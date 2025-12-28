@@ -23,6 +23,8 @@ from app.db_models import (
 from app.telegram_bot import telegram_service
 from app.llm import generate_message
 from app.patterns import PatternDetector
+from app.streaks import get_streak_context, update_response_streak, update_completion_streak, check_response_streak_broken
+from app.calendar_service import calendar_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -130,6 +132,12 @@ async def get_context(db: AsyncSession) -> dict:
     completed_month = completed_month_result.scalar() or 0
     completion_rate = (completed_month / total_month * 100) if total_month > 0 else 0
 
+    # Get streak context
+    streaks = await get_streak_context(db)
+
+    # Get calendar context
+    calendar_ctx = await calendar_service.get_calendar_context(db)
+
     return {
         "goals": goals,
         "pending_commitments": pending,
@@ -138,6 +146,8 @@ async def get_context(db: AsyncSession) -> dict:
         "patterns": patterns,
         "days_since_response": days_since_response,
         "completion_rate": round(completion_rate, 1),
+        "streaks": streaks,
+        "calendar": calendar_ctx,
     }
 
 
@@ -147,6 +157,15 @@ async def daily_checkin_job():
 
     async with async_session_maker() as db:
         try:
+            # Check if user is OOO today - skip check-in if so
+            if await calendar_service.is_configured(db):
+                if await calendar_service.is_ooo_today(db):
+                    logger.info("User is OOO today, skipping daily check-in")
+                    return
+
+            # Check if response streak was broken
+            await check_response_streak_broken(db)
+
             context = await get_context(db)
 
             # Generate message
@@ -190,11 +209,15 @@ async def daily_checkin_job():
 
 
 async def weekly_review_job():
-    """Send weekly review on Sunday evening."""
+    """Send weekly review on Sunday evening, followed by planning prompt."""
     logger.info("Running weekly review job")
 
     async with async_session_maker() as db:
         try:
+            # Update completion streak first
+            streak_result = await update_completion_streak(db)
+            logger.info(f"Completion streak updated: {streak_result}")
+
             context = await get_context(db)
 
             # Add weekly-specific stats
@@ -235,7 +258,7 @@ async def weekly_review_job():
             else:
                 context["weekly_response_rate"] = 0
 
-            # Generate message
+            # Generate review message (now includes planning prompt at the end)
             message = await generate_message("weekly_review", context)
 
             # Send via Telegram

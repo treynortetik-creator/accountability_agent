@@ -31,9 +31,11 @@ class CheckInType(enum.Enum):
 
     DAILY = "daily"
     WEEKLY_REVIEW = "weekly_review"
+    WEEKLY_PLANNING = "weekly_planning"
     ESCALATION = "escalation"
     DEADLINE_ALERT = "deadline_alert"
     MANUAL = "manual"
+    COMMITMENT_CONFIRM = "commitment_confirm"
 
 
 class Goal(Base):
@@ -177,4 +179,35 @@ class CalendarEvent(Base):
     end_time = Column(DateTime, nullable=True)
     all_day = Column(Boolean, default=False)
     location = Column(String(500), nullable=True)
+    is_ooo = Column(Boolean, default=False)  # Out of office/vacation
     last_synced = Column(DateTime, default=datetime.utcnow)
+
+
+class Streak(Base):
+    """Track user streaks for gamification."""
+
+    __tablename__ = "streaks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    streak_type = Column(String(50), nullable=False)  # 'response' or 'completion'
+    current_count = Column(Integer, default=0)
+    best_count = Column(Integer, default=0)
+    last_updated = Column(DateTime, default=datetime.utcnow)
+    last_activity_date = Column(DateTime, nullable=True)  # For daily response streak
+    last_week_end = Column(DateTime, nullable=True)  # For weekly completion streak
+
+
+class PendingCommitmentParse(Base):
+    """Temporary storage for commitments parsed from natural language awaiting confirmation."""
+
+    __tablename__ = "pending_commitment_parses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    original_message = Column(Text, nullable=False)
+    parsed_title = Column(String(255), nullable=False)
+    parsed_due_date = Column(DateTime, nullable=True)
+    parsed_description = Column(Text, nullable=True)
+    confirmation_message_id = Column(String(100), nullable=True)
+    status = Column(String(20), default="pending")  # pending, confirmed, rejected
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)  # Auto-expire after some time
