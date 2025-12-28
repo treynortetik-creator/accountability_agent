@@ -18,6 +18,7 @@ from app.db_models import (
     CheckIn,
     CheckInType,
     Pattern,
+    ChatMessage,
 )
 from app.telegram_bot import telegram_service
 from app.llm import generate_message
@@ -162,6 +163,15 @@ async def daily_checkin_job():
             )
             db.add(checkin)
 
+            # Save to chat history
+            chat_msg = ChatMessage(
+                role="warden",
+                content=message,
+                message_type="daily_checkin",
+                telegram_message_id=msg_id,
+            )
+            db.add(chat_msg)
+
             # Run pattern detection
             detector = PatternDetector(db)
             new_patterns = await detector.run_detection()
@@ -238,6 +248,16 @@ async def weekly_review_job():
                 telegram_message_id=msg_id,
             )
             db.add(checkin)
+
+            # Save to chat history
+            chat_msg = ChatMessage(
+                role="warden",
+                content=message,
+                message_type="weekly_review",
+                telegram_message_id=msg_id,
+            )
+            db.add(chat_msg)
+
             await db.commit()
 
             logger.info("Weekly review sent successfully")
@@ -304,6 +324,16 @@ async def silence_detector_job():
                 telegram_message_id=msg_id,
             )
             db.add(checkin)
+
+            # Save to chat history
+            chat_msg = ChatMessage(
+                role="warden",
+                content=message,
+                message_type="escalation",
+                telegram_message_id=msg_id,
+            )
+            db.add(chat_msg)
+
             await db.commit()
 
             logger.info(f"Escalation sent after {hours_since:.1f} hours of silence")
@@ -371,6 +401,15 @@ async def deadline_alert_job():
                     telegram_message_id=msg_id,
                 )
                 db.add(checkin)
+
+                # Save to chat history
+                chat_msg = ChatMessage(
+                    role="warden",
+                    content=message,
+                    message_type="deadline_alert",
+                    telegram_message_id=msg_id,
+                )
+                db.add(chat_msg)
 
             await db.commit()
             logger.info(f"Processed {len(upcoming)} upcoming deadlines")

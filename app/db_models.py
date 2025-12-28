@@ -138,3 +138,43 @@ class ScheduleConfig(Base):
     config_key = Column(String(50), unique=True, nullable=False)
     config_value = Column(String(255), nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Settings(Base):
+    """Application settings stored in database."""
+
+    __tablename__ = "settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), unique=True, nullable=False)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ChatMessage(Base):
+    """Chat messages for conversation history."""
+
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(String(20), nullable=False)  # 'warden' or 'user'
+    content = Column(Text, nullable=False)
+    message_type = Column(String(50), nullable=True)  # check-in type or 'reply'
+    telegram_message_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CalendarEvent(Base):
+    """Cached calendar events from Google Calendar."""
+
+    __tablename__ = "calendar_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    google_event_id = Column(String(255), unique=True, nullable=False)
+    title = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=True)
+    all_day = Column(Boolean, default=False)
+    location = Column(String(500), nullable=True)
+    last_synced = Column(DateTime, default=datetime.utcnow)

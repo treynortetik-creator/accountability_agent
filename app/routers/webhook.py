@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select, and_
 from app.database import async_session_maker
-from app.db_models import CheckIn, Response
+from app.db_models import CheckIn, Response, ChatMessage
 from app.telegram_bot import parse_telegram_update, telegram_service
 from app.llm import analyze_response
 from app.scheduler import get_context
@@ -81,17 +81,34 @@ async def telegram_webhook(request: Request):
             )
             db.add(response)
 
+            # Save user message to chat history
+            user_chat_msg = ChatMessage(
+                role="user",
+                content=parsed["text"],
+                message_type="reply",
+                telegram_message_id=parsed["message_id"],
+            )
+            db.add(user_chat_msg)
+
             # Mark check-in as responded if we found one
             if checkin:
                 checkin.response_received = True
                 checkin.responded_at = datetime.utcnow()
 
-            await db.commit()
-
             # Send reply if the LLM generated one
             reply = analysis.get("reply")
             if reply:
-                await telegram_service.send_message(reply)
+                msg_id = await telegram_service.send_message(reply)
+                # Save warden reply to chat history
+                warden_chat_msg = ChatMessage(
+                    role="warden",
+                    content=reply,
+                    message_type="reply",
+                    telegram_message_id=msg_id,
+                )
+                db.add(warden_chat_msg)
+
+            await db.commit()
 
             logger.info("Processed incoming message successfully")
             return {"ok": True}

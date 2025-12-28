@@ -6,575 +6,711 @@ DASHBOARD_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Warden - Dashboard</title>
+    <title>The Warden</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a25;
+            --bg-hover: #22222f;
+            --border: #2a2a3a;
+            --text-primary: #f0f0f5;
+            --text-secondary: #9090a0;
+            --text-muted: #606070;
+            --accent: #ff3b3b;
+            --accent-dim: #cc2f2f;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: #0e1117;
-            color: #fafafa;
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             min-height: 100vh;
-            padding: 20px;
+            line-height: 1.5;
         }
-        .container { max-width: 1200px; margin: 0 auto; }
-        header {
+
+        .app-container { display: flex; min-height: 100vh; }
+
+        .sidebar {
+            width: 260px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            padding: 24px 16px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            padding: 32px 40px;
+            max-width: 1200px;
+        }
+
+        .logo {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            padding: 20px 0;
-            border-bottom: 1px solid #262730;
-            margin-bottom: 30px;
+            gap: 12px;
+            padding: 0 12px 24px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 24px;
         }
-        h1 { font-size: 1.8rem; }
-        h1 span { color: #ff4b4b; }
-        .auth-form { display: flex; gap: 10px; }
-        .auth-form input {
-            background: #262730;
-            border: 1px solid #404040;
-            color: #fff;
-            padding: 8px 12px;
-            border-radius: 6px;
-            width: 300px;
-        }
-        .btn {
-            background: #ff4b4b;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: background 0.2s;
-        }
-        .btn:hover { background: #ff3333; }
-        .btn-secondary { background: #262730; }
-        .btn-secondary:hover { background: #363740; }
-        .btn-success { background: #00cc00; }
-        .btn-warning { background: #ffa500; }
 
-        .metrics {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .metric-card {
-            background: #1e2130;
-            padding: 20px;
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent), #ff6b6b);
             border-radius: 10px;
-            border-left: 4px solid #ff4b4b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
         }
-        .metric-card h3 { color: #888; font-size: 0.9rem; margin-bottom: 8px; }
-        .metric-card .value { font-size: 2rem; font-weight: bold; }
-        .metric-card.good { border-left-color: #00cc00; }
-        .metric-card.warning { border-left-color: #ffa500; }
 
-        .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 30px; }
-        @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+        .logo-text { font-weight: 700; font-size: 18px; }
+        .logo-text span { color: var(--accent); }
+
+        .nav-section { margin-bottom: 32px; }
+
+        .nav-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            padding: 0 12px;
+            margin-bottom: 8px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .nav-item.active { background: var(--bg-tertiary); color: var(--text-primary); }
+        .nav-item .icon { font-size: 18px; width: 24px; text-align: center; }
 
         .card {
-            background: #1e2130;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .card h2 {
-            font-size: 1.2rem;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #262730;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
         }
 
-        .pattern {
-            background: #262730;
-            padding: 12px 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            border-left: 4px solid #ff4b4b;
-        }
-        .pattern.severity-low { border-left-color: #00cc00; }
-        .pattern.severity-med { border-left-color: #ffa500; }
-        .pattern-type { font-weight: bold; text-transform: uppercase; font-size: 0.8rem; }
-
-        .commitment {
+        .card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid #262730;
-        }
-        .commitment:last-child { border-bottom: none; }
-        .commitment-title { font-weight: 500; }
-        .commitment-meta { color: #888; font-size: 0.85rem; }
-        .commitment-actions { display: flex; gap: 8px; }
-        .commitment-actions button {
-            padding: 6px 12px;
-            font-size: 0.8rem;
+            margin-bottom: 20px;
         }
 
-        .status-pending { color: #ffa500; }
-        .status-completed { color: #00cc00; }
-        .status-failed { color: #ff4b4b; }
+        .card-title { font-size: 16px; font-weight: 600; }
 
-        .checkin {
-            padding: 12px 0;
-            border-bottom: 1px solid #262730;
-        }
-        .checkin:last-child { border-bottom: none; }
-        .checkin-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
-        .checkin-type { font-weight: 500; }
-        .checkin-time { color: #888; font-size: 0.85rem; }
-        .checkin-message {
-            background: #262730;
-            padding: 10px 15px;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            color: #ccc;
+        .page-header { margin-bottom: 32px; }
+        .page-title { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+        .page-subtitle { color: var(--text-secondary); font-size: 15px; }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
         }
 
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; color: #888; }
-        .form-group input, .form-group textarea, .form-group select {
+        @media (max-width: 1100px) { .metrics-grid { grid-template-columns: repeat(2, 1fr); } }
+
+        .metric-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: var(--accent);
+        }
+
+        .metric-card.success::before { background: var(--success); }
+        .metric-card.warning::before { background: var(--warning); }
+        .metric-card.info::before { background: var(--info); }
+
+        .metric-label { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+        .metric-value { font-size: 32px; font-weight: 700; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary:hover { background: var(--accent-dim); }
+        .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-secondary:hover { background: var(--bg-hover); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-warning { background: var(--warning); color: black; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+        .form-group { margin-bottom: 20px; }
+        .form-label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
+
+        .form-input, .form-textarea {
             width: 100%;
-            background: #262730;
-            border: 1px solid #404040;
-            color: #fff;
-            padding: 10px 12px;
-            border-radius: 6px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
         }
-        .form-group textarea { min-height: 80px; resize: vertical; }
+
+        .form-input:focus, .form-textarea:focus { outline: none; border-color: var(--accent); }
+
+        .form-textarea {
+            min-height: 120px;
+            resize: vertical;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        .chat-container {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            height: 500px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-messages { flex: 1; overflow-y: auto; padding: 20px; }
+
+        .chat-message {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            max-width: 85%;
+        }
+
+        .chat-message.warden { margin-right: auto; }
+        .chat-message.user { margin-left: auto; flex-direction: row-reverse; }
+
+        .chat-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .chat-message.warden .chat-avatar { background: linear-gradient(135deg, var(--accent), #ff6b6b); }
+        .chat-message.user .chat-avatar { background: var(--bg-tertiary); border: 1px solid var(--border); }
+
+        .chat-bubble {
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+        }
+
+        .chat-message.warden .chat-bubble { background: var(--bg-secondary); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+        .chat-message.user .chat-bubble { background: var(--bg-tertiary); border-bottom-right-radius: 4px; }
+        .chat-time { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+        .chat-type { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-bottom: 4px; }
+
+        .list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .list-item:last-child { border-bottom: none; }
+        .list-item-title { font-weight: 500; margin-bottom: 4px; }
+        .list-item-meta { font-size: 13px; color: var(--text-secondary); }
+        .list-item-actions { display: flex; gap: 8px; }
+
+        .pattern-item {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 3px solid var(--danger);
+        }
+        .pattern-item.medium { border-left-color: var(--warning); }
+        .pattern-item.low { border-left-color: var(--success); }
+        .pattern-type { font-size: 12px; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+        .pattern-desc { font-size: 14px; color: var(--text-secondary); }
 
         .tabs {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 1px solid #262730;
-            padding-bottom: 10px;
+            gap: 4px;
+            background: var(--bg-tertiary);
+            padding: 4px;
+            border-radius: 10px;
+            margin-bottom: 24px;
         }
+
         .tab {
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            color: var(--text-secondary);
             background: none;
             border: none;
-            color: #888;
-            padding: 10px 20px;
-            cursor: pointer;
-            font-size: 1rem;
-            border-radius: 6px;
         }
-        .tab:hover { color: #fff; background: #262730; }
-        .tab.active { color: #fff; background: #ff4b4b; }
+        .tab:hover { color: var(--text-primary); }
+        .tab.active { background: var(--bg-secondary); color: var(--text-primary); }
 
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #666;
+        .badge {
+            display: inline-flex;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
         }
+        .badge-pending { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+        .badge-completed { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+        .badge-failed { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
+
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+        .grid-3 { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+        @media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+        .empty-state { text-align: center; padding: 48px 24px; color: var(--text-muted); }
+        .empty-state-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
 
         .toast {
             position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #00cc00;
-            color: #000;
-            padding: 15px 25px;
-            border-radius: 8px;
-            font-weight: 500;
+            bottom: 24px;
+            right: 24px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            padding: 16px 20px;
+            border-radius: 10px;
             display: none;
             z-index: 1000;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
         }
-        .toast.error { background: #ff4b4b; color: #fff; }
+        .toast.success { border-left: 3px solid var(--success); }
+        .toast.error { border-left: 3px solid var(--danger); }
         .toast.show { display: block; }
 
-        .loading { opacity: 0.5; pointer-events: none; }
+        .auth-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .auth-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .auth-logo {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, var(--accent), #ff6b6b);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin: 0 auto 24px;
+        }
+
+        .auth-title { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+        .auth-subtitle { color: var(--text-secondary); margin-bottom: 32px; }
+
+        .section { display: none; }
+        .section.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 20px; }
+        }
+
+        .model-option {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+        .model-option:hover { border-color: var(--text-muted); }
+        .model-option.selected { border-color: var(--accent); background: rgba(255, 59, 59, 0.05); }
+        .model-name { font-weight: 500; }
+        .model-provider { font-size: 12px; color: var(--text-muted); }
+        .model-cost { font-size: 13px; color: var(--warning); }
+
+        .calendar-event {
+            display: flex;
+            gap: 16px;
+            padding: 14px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .calendar-event:last-child { border-bottom: none; }
+        .event-time { width: 70px; font-size: 13px; font-weight: 500; color: var(--accent); }
+        .event-title { font-weight: 500; }
+        .event-location { font-size: 13px; color: var(--text-muted); }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🔒 The <span>Warden</span></h1>
-            <div class="auth-form">
-                <input type="password" id="apiKey" placeholder="Enter API Key" />
-                <button class="btn" onclick="authenticate()">Connect</button>
+    <div id="auth-overlay" class="auth-overlay">
+        <div class="auth-card">
+            <div class="auth-logo">🔒</div>
+            <h1 class="auth-title">The Warden</h1>
+            <p class="auth-subtitle">Enter your API key to continue</p>
+            <div class="form-group">
+                <input type="password" id="apiKeyInput" class="form-input" placeholder="API Key" />
             </div>
-        </header>
+            <button class="btn btn-primary" style="width: 100%;" onclick="authenticate()">Connect</button>
+        </div>
+    </div>
 
-        <div id="dashboard" style="display: none;">
-            <div class="tabs">
-                <button class="tab active" onclick="showTab('overview')">📊 Overview</button>
-                <button class="tab" onclick="showTab('commitments')">✅ Commitments</button>
-                <button class="tab" onclick="showTab('goals')">🎯 Goals</button>
-                <button class="tab" onclick="showTab('checkins')">📋 Check-ins</button>
+    <div class="app-container" id="app" style="display: none;">
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">🔒</div>
+                <div class="logo-text">The <span>Warden</span></div>
             </div>
 
-            <!-- Overview Tab -->
-            <div id="tab-overview" class="tab-content active">
-                <div class="metrics" id="metrics">
-                    <div class="metric-card"><h3>Completion Rate</h3><div class="value" id="completion-rate">--%</div></div>
-                    <div class="metric-card warning"><h3>Pending Tasks</h3><div class="value" id="pending-count">--</div></div>
-                    <div class="metric-card"><h3>Response Rate</h3><div class="value" id="response-rate">--%</div></div>
-                    <div class="metric-card"><h3>Avg Response</h3><div class="value" id="avg-response">--h</div></div>
+            <div class="nav-section">
+                <div class="nav-label">Overview</div>
+                <div class="nav-item active" onclick="showSection('dashboard')"><span class="icon">📊</span> Dashboard</div>
+                <div class="nav-item" onclick="showSection('chat')"><span class="icon">💬</span> Chat History</div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-label">Tracking</div>
+                <div class="nav-item" onclick="showSection('commitments')"><span class="icon">✅</span> Commitments</div>
+                <div class="nav-item" onclick="showSection('goals')"><span class="icon">🎯</span> Goals</div>
+                <div class="nav-item" onclick="showSection('calendar')"><span class="icon">📅</span> Calendar</div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-label">Configuration</div>
+                <div class="nav-item" onclick="showSection('settings')"><span class="icon">⚙️</span> Settings</div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <section id="section-dashboard" class="section active">
+                <div class="page-header">
+                    <h1 class="page-title">Dashboard</h1>
+                    <p class="page-subtitle">Your accountability at a glance</p>
                 </div>
 
-                <div class="grid-2">
+                <div class="metrics-grid">
+                    <div class="metric-card success"><div class="metric-label">Completion Rate</div><div class="metric-value" id="metric-completion">--%</div></div>
+                    <div class="metric-card warning"><div class="metric-label">Pending Tasks</div><div class="metric-value" id="metric-pending">--</div></div>
+                    <div class="metric-card info"><div class="metric-label">Response Rate</div><div class="metric-value" id="metric-response">--%</div></div>
+                    <div class="metric-card"><div class="metric-label">Avg Response Time</div><div class="metric-value" id="metric-avg-time">--</div></div>
+                </div>
+
+                <div class="grid-3">
                     <div class="card">
-                        <h2>Recent Check-ins</h2>
-                        <div id="recent-checkins"><div class="empty-state">Loading...</div></div>
+                        <div class="card-header">
+                            <h3 class="card-title">Recent Activity</h3>
+                            <button class="btn btn-sm btn-secondary" onclick="triggerCheckin()">🔔 Trigger Check-in</button>
+                        </div>
+                        <div id="recent-activity"><div class="empty-state">Loading...</div></div>
                     </div>
                     <div class="card">
-                        <h2>🚨 Active Patterns</h2>
-                        <div id="patterns"><div class="empty-state">Loading...</div></div>
+                        <div class="card-header"><h3 class="card-title">Active Patterns</h3></div>
+                        <div id="patterns-list"><div class="empty-state">Loading...</div></div>
                     </div>
                 </div>
+            </section>
 
-                <div class="card">
-                    <h2>⚡ Quick Actions</h2>
-                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <button class="btn" onclick="triggerCheckin()">🔔 Trigger Check-in</button>
-                        <button class="btn btn-secondary" onclick="triggerWeeklyReview()">📊 Trigger Weekly Review</button>
-                    </div>
+            <section id="section-chat" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">Chat History</h1>
+                    <p class="page-subtitle">Your conversation with The Warden</p>
                 </div>
-            </div>
+                <div class="chat-container">
+                    <div class="chat-messages" id="chat-messages"><div class="empty-state">Loading...</div></div>
+                </div>
+            </section>
 
-            <!-- Commitments Tab -->
-            <div id="tab-commitments" class="tab-content">
+            <section id="section-commitments" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">Commitments</h1>
+                    <p class="page-subtitle">Track what you've promised to deliver</p>
+                </div>
                 <div class="card">
-                    <h2>➕ Add Commitment</h2>
-                    <form id="commitment-form" onsubmit="createCommitment(event)">
-                        <div class="form-group">
-                            <label>Title</label>
-                            <input type="text" id="commit-title" required placeholder="What are you committing to?">
+                    <div class="card-header"><h3 class="card-title">Add Commitment</h3></div>
+                    <form onsubmit="createCommitment(event)">
+                        <div class="grid-2">
+                            <div class="form-group"><label class="form-label">What are you committing to?</label><input type="text" id="commit-title" class="form-input" required /></div>
+                            <div class="form-group"><label class="form-label">Due Date</label><input type="date" id="commit-due" class="form-input" /></div>
                         </div>
-                        <div class="form-group">
-                            <label>Due Date (optional)</label>
-                            <input type="date" id="commit-due">
-                        </div>
-                        <div class="form-group">
-                            <label>Goal (optional)</label>
-                            <select id="commit-goal"><option value="">-- No Goal --</option></select>
-                        </div>
-                        <button type="submit" class="btn">Add Commitment</button>
+                        <button type="submit" class="btn btn-primary">Add Commitment</button>
                     </form>
                 </div>
-
-                <div class="card">
-                    <h2>Pending Commitments</h2>
-                    <div id="pending-commitments"><div class="empty-state">Loading...</div></div>
+                <div class="tabs">
+                    <button class="tab active" onclick="filterCommitments('pending')">Pending</button>
+                    <button class="tab" onclick="filterCommitments('completed')">Completed</button>
+                    <button class="tab" onclick="filterCommitments('failed')">Failed</button>
                 </div>
+                <div class="card"><div id="commitments-list"><div class="empty-state">Loading...</div></div></div>
+            </section>
 
-                <div class="card">
-                    <h2>Completed</h2>
-                    <div id="completed-commitments"><div class="empty-state">Loading...</div></div>
+            <section id="section-goals" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">Goals</h1>
+                    <p class="page-subtitle">What are you working toward?</p>
                 </div>
-            </div>
-
-            <!-- Goals Tab -->
-            <div id="tab-goals" class="tab-content">
                 <div class="card">
-                    <h2>➕ Add Goal</h2>
-                    <form id="goal-form" onsubmit="createGoal(event)">
-                        <div class="form-group">
-                            <label>Goal Title</label>
-                            <input type="text" id="goal-title" required placeholder="What's the goal?">
+                    <div class="card-header"><h3 class="card-title">Add Goal</h3></div>
+                    <form onsubmit="createGoal(event)">
+                        <div class="form-group"><label class="form-label">Goal Title</label><input type="text" id="goal-title" class="form-input" required /></div>
+                        <div class="grid-2">
+                            <div class="form-group"><label class="form-label">Description</label><input type="text" id="goal-desc" class="form-input" /></div>
+                            <div class="form-group"><label class="form-label">Target Date</label><input type="date" id="goal-date" class="form-input" /></div>
                         </div>
-                        <div class="form-group">
-                            <label>Description (optional)</label>
-                            <textarea id="goal-desc" placeholder="More details..."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Target Date (optional)</label>
-                            <input type="date" id="goal-date">
-                        </div>
-                        <button type="submit" class="btn">Add Goal</button>
+                        <button type="submit" class="btn btn-primary">Add Goal</button>
                     </form>
                 </div>
-
                 <div class="card">
-                    <h2>Active Goals</h2>
+                    <div class="card-header"><h3 class="card-title">Active Goals</h3></div>
                     <div id="goals-list"><div class="empty-state">Loading...</div></div>
                 </div>
-            </div>
+            </section>
 
-            <!-- Check-ins Tab -->
-            <div id="tab-checkins" class="tab-content">
-                <div class="card">
-                    <h2>Check-in History</h2>
-                    <div id="checkins-list"><div class="empty-state">Loading...</div></div>
+            <section id="section-calendar" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">Calendar</h1>
+                    <p class="page-subtitle">Upcoming events and deadlines</p>
                 </div>
-            </div>
-        </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Upcoming Events</h3>
+                        <button class="btn btn-sm btn-secondary" onclick="addManualEvent()">+ Add Event</button>
+                    </div>
+                    <div id="calendar-events"><div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events</p></div></div>
+                </div>
+            </section>
 
-        <div id="login-prompt" class="card" style="max-width: 500px; margin: 100px auto; text-align: center;">
-            <h2>🔒 Enter API Key</h2>
-            <p style="color: #888; margin: 20px 0;">Enter your API key to access the dashboard.</p>
-        </div>
+            <section id="section-settings" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">Settings</h1>
+                    <p class="page-subtitle">Configure The Warden's behavior</p>
+                </div>
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-header"><h3 class="card-title">LLM Model</h3></div>
+                        <div id="model-selector"><div class="empty-state">Loading...</div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3 class="card-title">Quick Actions</h3></div>
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                            <button class="btn btn-secondary" onclick="triggerCheckin()">🔔 Trigger Check-in</button>
+                            <button class="btn btn-secondary" onclick="triggerWeeklyReview()">📊 Trigger Weekly Review</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">System Prompt</h3>
+                        <button class="btn btn-sm btn-secondary" onclick="resetPrompt()">Reset to Default</button>
+                    </div>
+                    <div class="form-group"><textarea id="system-prompt" class="form-textarea" style="min-height: 300px;"></textarea></div>
+                    <button class="btn btn-primary" onclick="savePrompt()">Save Prompt</button>
+                </div>
+            </section>
+        </main>
     </div>
 
     <div id="toast" class="toast"></div>
 
     <script>
         let API_KEY = localStorage.getItem('warden_api_key') || '';
+        let currentCommitmentFilter = 'pending';
 
-        if (API_KEY) {
-            document.getElementById('apiKey').value = API_KEY;
-            authenticate();
-        }
+        if (API_KEY) { document.getElementById('apiKeyInput').value = API_KEY; authenticate(); }
 
         async function api(method, endpoint, data = null) {
-            const opts = {
-                method,
-                headers: {
-                    'X-API-Key': API_KEY,
-                    'Content-Type': 'application/json'
-                }
-            };
+            const opts = { method, headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' } };
             if (data) opts.body = JSON.stringify(data);
             const res = await fetch('/api' + endpoint, opts);
-            if (res.status === 401 || res.status === 403) {
-                showToast('Invalid API key', true);
-                return null;
-            }
-            if (!res.ok) {
-                showToast('API Error: ' + res.status, true);
-                return null;
-            }
+            if (res.status === 401 || res.status === 403) { showToast('Invalid API key', 'error'); return null; }
+            if (!res.ok) return null;
             return res.status === 204 ? null : await res.json();
         }
 
-        function showToast(msg, isError = false) {
+        function showToast(msg, type = 'success') {
             const toast = document.getElementById('toast');
             toast.textContent = msg;
-            toast.className = 'toast show' + (isError ? ' error' : '');
+            toast.className = 'toast show ' + type;
             setTimeout(() => toast.className = 'toast', 3000);
         }
 
-        function showTab(name) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            document.querySelector(`[onclick="showTab('${name}')"]`).classList.add('active');
-            document.getElementById('tab-' + name).classList.add('active');
+        function showSection(name) {
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.getElementById('section-' + name).classList.add('active');
+            event.target.closest('.nav-item').classList.add('active');
+            if (name === 'chat') loadChatHistory();
+            if (name === 'commitments') loadCommitments();
+            if (name === 'goals') loadGoals();
+            if (name === 'calendar') loadCalendarEvents();
+            if (name === 'settings') loadSettings();
         }
 
         async function authenticate() {
-            API_KEY = document.getElementById('apiKey').value;
+            API_KEY = document.getElementById('apiKeyInput').value;
             localStorage.setItem('warden_api_key', API_KEY);
-
             const stats = await api('GET', '/checkins/stats');
             if (stats) {
-                document.getElementById('dashboard').style.display = 'block';
-                document.getElementById('login-prompt').style.display = 'none';
+                document.getElementById('auth-overlay').style.display = 'none';
+                document.getElementById('app').style.display = 'flex';
                 loadDashboard();
             }
         }
 
         async function loadDashboard() {
-            await Promise.all([loadStats(), loadPatterns(), loadCheckins(), loadCommitments(), loadGoals()]);
-        }
-
-        async function loadStats() {
             const stats = await api('GET', '/checkins/stats');
             if (!stats) return;
+            document.getElementById('metric-completion').textContent = (stats.completion_rate * 100).toFixed(0) + '%';
+            document.getElementById('metric-pending').textContent = stats.pending_commitments;
+            document.getElementById('metric-response').textContent = (stats.response_rate * 100).toFixed(0) + '%';
+            document.getElementById('metric-avg-time').textContent = stats.average_response_time_hours ? stats.average_response_time_hours.toFixed(1) + 'h' : 'N/A';
 
-            document.getElementById('completion-rate').textContent = (stats.completion_rate * 100).toFixed(0) + '%';
-            document.getElementById('pending-count').textContent = stats.pending_commitments;
-            document.getElementById('response-rate').textContent = (stats.response_rate * 100).toFixed(0) + '%';
-            document.getElementById('avg-response').textContent = stats.average_response_time_hours
-                ? stats.average_response_time_hours.toFixed(1) + 'h' : 'N/A';
-        }
+            document.getElementById('patterns-list').innerHTML = stats.active_patterns.length
+                ? stats.active_patterns.map(p => `<div class="pattern-item ${p.severity >= 4 ? '' : p.severity >= 2 ? 'medium' : 'low'}"><div class="pattern-type">${p.pattern_type}</div><div class="pattern-desc">${p.description}</div></div>`).join('')
+                : '<div class="empty-state">No patterns detected</div>';
 
-        async function loadPatterns() {
-            const stats = await api('GET', '/checkins/stats');
-            const container = document.getElementById('patterns');
-
-            if (!stats || !stats.active_patterns.length) {
-                container.innerHTML = '<div class="empty-state">No patterns detected. Stay vigilant.</div>';
-                return;
-            }
-
-            container.innerHTML = stats.active_patterns.map(p => `
-                <div class="pattern ${p.severity >= 4 ? '' : p.severity >= 2 ? 'severity-med' : 'severity-low'}">
-                    <div class="pattern-type">${p.severity >= 4 ? '🔴' : p.severity >= 2 ? '🟡' : '🟢'} ${p.pattern_type}</div>
-                    <div>${p.description}</div>
-                </div>
-            `).join('');
-        }
-
-        async function loadCheckins() {
             const checkins = await api('GET', '/checkins?limit=5');
-            const container = document.getElementById('recent-checkins');
-            const fullContainer = document.getElementById('checkins-list');
+            document.getElementById('recent-activity').innerHTML = checkins && checkins.length
+                ? checkins.map(c => `<div class="list-item"><div><div class="list-item-title">${c.response_received ? '✅' : '⏳'} ${c.check_in_type.replace('_', ' ')}</div><div class="list-item-meta">${new Date(c.sent_at).toLocaleString()}</div></div></div>`).join('')
+                : '<div class="empty-state">No check-ins yet</div>';
+        }
 
-            if (!checkins || !checkins.length) {
-                container.innerHTML = '<div class="empty-state">No check-ins yet.</div>';
-                fullContainer.innerHTML = '<div class="empty-state">No check-ins yet.</div>';
-                return;
-            }
-
-            const render = (list) => list.map(c => `
-                <div class="checkin">
-                    <div class="checkin-header">
-                        <span class="checkin-type">${c.response_received ? '✅' : '⏳'} ${c.check_in_type.replace('_', ' ')}</span>
-                        <span class="checkin-time">${new Date(c.sent_at).toLocaleString()}</span>
-                    </div>
-                    <div class="checkin-message">${c.message_sent}</div>
-                </div>
-            `).join('');
-
-            container.innerHTML = render(checkins);
-
-            const allCheckins = await api('GET', '/checkins?limit=20');
-            if (allCheckins) fullContainer.innerHTML = render(allCheckins);
+        async function loadChatHistory() {
+            const messages = await api('GET', '/settings/chat-history?limit=50');
+            const container = document.getElementById('chat-messages');
+            if (!messages || !messages.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><p>No messages yet</p></div>'; return; }
+            container.innerHTML = messages.map(m => `<div class="chat-message ${m.role}"><div class="chat-avatar">${m.role === 'warden' ? '🔒' : '👤'}</div><div>${m.message_type ? `<div class="chat-type">${m.message_type.replace('_', ' ')}</div>` : ''}<div class="chat-bubble">${m.content}</div><div class="chat-time">${new Date(m.created_at).toLocaleString()}</div></div></div>`).join('');
+            container.scrollTop = container.scrollHeight;
         }
 
         async function loadCommitments() {
-            const pending = await api('GET', '/commitments?status_filter=pending');
-            const completed = await api('GET', '/commitments?status_filter=completed&limit=10');
-
-            const renderCommitment = (c) => `
-                <div class="commitment">
-                    <div>
-                        <div class="commitment-title">${c.title}</div>
-                        <div class="commitment-meta">
-                            ${c.due_date ? '📅 ' + new Date(c.due_date).toLocaleDateString() : ''}
-                            ${c.deferred_count > 0 ? ' 🔄 Deferred ' + c.deferred_count + 'x' : ''}
-                        </div>
-                    </div>
-                    <div class="commitment-actions">
-                        ${c.status === 'pending' ? `
-                            <button class="btn btn-success" onclick="completeCommitment(${c.id})">✓ Done</button>
-                            <button class="btn btn-warning" onclick="deferCommitment(${c.id})">Defer</button>
-                        ` : ''}
-                    </div>
-                </div>
-            `;
-
-            document.getElementById('pending-commitments').innerHTML = pending && pending.length
-                ? pending.map(renderCommitment).join('')
-                : '<div class="empty-state">No pending commitments. Time to commit to something.</div>';
-
-            document.getElementById('completed-commitments').innerHTML = completed && completed.length
-                ? completed.map(renderCommitment).join('')
-                : '<div class="empty-state">Nothing completed yet.</div>';
+            const commits = await api('GET', `/commitments?status_filter=${currentCommitmentFilter}&limit=50`);
+            const container = document.getElementById('commitments-list');
+            if (!commits || !commits.length) { container.innerHTML = '<div class="empty-state">No commitments found</div>'; return; }
+            container.innerHTML = commits.map(c => `<div class="list-item"><div><div class="list-item-title">${c.title}</div><div class="list-item-meta">${c.due_date ? '📅 ' + new Date(c.due_date).toLocaleDateString() : ''} ${c.deferred_count > 0 ? '<span style="color: var(--warning);">🔄 Deferred ' + c.deferred_count + 'x</span>' : ''}</div></div><div class="list-item-actions">${c.status === 'pending' ? `<button class="btn btn-sm btn-success" onclick="completeCommitment(${c.id})">✓</button><button class="btn btn-sm btn-warning" onclick="deferCommitment(${c.id})">Defer</button>` : `<span class="badge badge-${c.status}">${c.status}</span>`}</div></div>`).join('');
         }
 
-        async function loadGoals() {
-            const goals = await api('GET', '/goals');
-            const container = document.getElementById('goals-list');
-            const select = document.getElementById('commit-goal');
-
-            select.innerHTML = '<option value="">-- No Goal --</option>';
-
-            if (!goals || !goals.length) {
-                container.innerHTML = '<div class="empty-state">No goals set. What are you working toward?</div>';
-                return;
-            }
-
-            goals.forEach(g => {
-                select.innerHTML += `<option value="${g.id}">${g.title}</option>`;
-            });
-
-            container.innerHTML = goals.map(g => `
-                <div class="commitment">
-                    <div>
-                        <div class="commitment-title">${g.title}</div>
-                        <div class="commitment-meta">
-                            ${g.description || ''}
-                            ${g.target_date ? ' 📅 ' + new Date(g.target_date).toLocaleDateString() : ''}
-                        </div>
-                    </div>
-                    <div class="commitment-actions">
-                        <button class="btn btn-secondary" onclick="deleteGoal(${g.id})">🗑️</button>
-                    </div>
-                </div>
-            `).join('');
+        function filterCommitments(status) {
+            currentCommitmentFilter = status;
+            document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            loadCommitments();
         }
 
         async function createCommitment(e) {
             e.preventDefault();
-            const data = {
-                title: document.getElementById('commit-title').value,
-            };
+            const data = { title: document.getElementById('commit-title').value };
             const due = document.getElementById('commit-due').value;
-            const goal = document.getElementById('commit-goal').value;
-            if (due) data.due_date = due + 'T00:00:00';
-            if (goal) data.goal_id = parseInt(goal);
+            if (due) data.due_date = due + 'T23:59:59';
+            if (await api('POST', '/commitments', data)) { showToast('Commitment added'); document.getElementById('commit-title').value = ''; document.getElementById('commit-due').value = ''; loadCommitments(); loadDashboard(); }
+        }
 
-            const result = await api('POST', '/commitments', data);
-            if (result) {
-                showToast('Commitment added');
-                document.getElementById('commit-title').value = '';
-                document.getElementById('commit-due').value = '';
-                loadCommitments();
-                loadStats();
-            }
+        async function completeCommitment(id) { await api('POST', `/commitments/${id}/complete`); showToast('Marked complete'); loadCommitments(); loadDashboard(); }
+        async function deferCommitment(id) { await api('POST', `/commitments/${id}/defer`); showToast('Deferred'); loadCommitments(); }
+
+        async function loadGoals() {
+            const goals = await api('GET', '/goals');
+            const container = document.getElementById('goals-list');
+            if (!goals || !goals.length) { container.innerHTML = '<div class="empty-state">No goals set</div>'; return; }
+            container.innerHTML = goals.map(g => `<div class="list-item"><div><div class="list-item-title">${g.title}</div><div class="list-item-meta">${g.description || ''} ${g.target_date ? '📅 ' + new Date(g.target_date).toLocaleDateString() : ''}</div></div><div class="list-item-actions"><button class="btn btn-sm btn-danger" onclick="deleteGoal(${g.id})">🗑️</button></div></div>`).join('');
         }
 
         async function createGoal(e) {
             e.preventDefault();
-            const data = {
-                title: document.getElementById('goal-title').value,
-            };
+            const data = { title: document.getElementById('goal-title').value };
             const desc = document.getElementById('goal-desc').value;
             const date = document.getElementById('goal-date').value;
             if (desc) data.description = desc;
             if (date) data.target_date = date + 'T00:00:00';
+            if (await api('POST', '/goals', data)) { showToast('Goal added'); document.getElementById('goal-title').value = ''; document.getElementById('goal-desc').value = ''; document.getElementById('goal-date').value = ''; loadGoals(); }
+        }
 
-            const result = await api('POST', '/goals', data);
-            if (result) {
-                showToast('Goal added');
-                document.getElementById('goal-title').value = '';
-                document.getElementById('goal-desc').value = '';
-                document.getElementById('goal-date').value = '';
-                loadGoals();
+        async function deleteGoal(id) { if (!confirm('Delete this goal?')) return; await api('DELETE', `/goals/${id}`); showToast('Goal deleted'); loadGoals(); }
+
+        async function loadCalendarEvents() {
+            const events = await api('GET', '/calendar/events?days_ahead=14');
+            const container = document.getElementById('calendar-events');
+            if (!events || !events.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events</p></div>'; return; }
+            container.innerHTML = events.map(e => `<div class="calendar-event"><div class="event-time">${e.all_day ? 'All day' : new Date(e.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div><div><div class="event-title">${e.title}</div>${e.location ? `<div class="event-location">📍 ${e.location}</div>` : ''}</div></div>`).join('');
+        }
+
+        async function loadSettings() {
+            const models = await api('GET', '/settings/models');
+            const settings = await api('GET', '/settings');
+            if (models && settings) {
+                document.getElementById('model-selector').innerHTML = models.map(m => `<div class="model-option ${m.id === settings.openrouter_model ? 'selected' : ''}" onclick="selectModel('${m.id}')"><div><div class="model-name">${m.name}</div><div class="model-provider">${m.provider}</div></div><div class="model-cost">${m.cost}</div></div>`).join('');
+                document.getElementById('system-prompt').value = settings.system_prompt;
             }
         }
 
-        async function completeCommitment(id) {
-            const result = await api('POST', `/commitments/${id}/complete`);
-            if (result) {
-                showToast('Marked complete');
-                loadCommitments();
-                loadStats();
-            }
-        }
-
-        async function deferCommitment(id) {
-            const result = await api('POST', `/commitments/${id}/defer`);
-            if (result) {
-                showToast('Deferred');
-                loadCommitments();
-            }
-        }
-
-        async function deleteGoal(id) {
-            if (!confirm('Delete this goal?')) return;
-            await api('DELETE', `/goals/${id}`);
-            showToast('Goal deleted');
-            loadGoals();
-        }
-
-        async function triggerCheckin() {
-            const result = await fetch('/api/trigger/checkin', {
-                method: 'POST',
-                headers: { 'X-API-Key': API_KEY }
-            });
-            if (result.ok) {
-                showToast('Check-in triggered!');
-                setTimeout(loadCheckins, 2000);
-            }
-        }
-
-        async function triggerWeeklyReview() {
-            const result = await fetch('/api/trigger/weekly-review', {
-                method: 'POST',
-                headers: { 'X-API-Key': API_KEY }
-            });
-            if (result.ok) {
-                showToast('Weekly review triggered!');
-                setTimeout(loadCheckins, 2000);
-            }
-        }
+        async function selectModel(modelId) { if (await api('PUT', '/settings/model', { value: modelId })) { showToast('Model updated'); loadSettings(); } }
+        async function savePrompt() { if (await api('PUT', '/settings/prompt', { value: document.getElementById('system-prompt').value })) showToast('Prompt saved'); }
+        async function resetPrompt() { const result = await api('POST', '/settings/prompt/reset'); if (result) { document.getElementById('system-prompt').value = result.prompt; showToast('Prompt reset'); } }
+        async function triggerCheckin() { await api('POST', '/trigger/checkin'); showToast('Check-in triggered'); setTimeout(loadDashboard, 2000); }
+        async function triggerWeeklyReview() { await api('POST', '/trigger/weekly-review'); showToast('Weekly review triggered'); }
+        function addManualEvent() { const title = prompt('Event title:'); if (!title) return; const dateStr = prompt('Date (YYYY-MM-DD):'); if (!dateStr) return; api('POST', `/calendar/events/manual?title=${encodeURIComponent(title)}&start_time=${dateStr}T09:00:00`).then(() => { showToast('Event added'); loadCalendarEvents(); }); }
     </script>
 </body>
 </html>
