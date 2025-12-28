@@ -3,7 +3,7 @@
 import httpx
 from typing import List, Optional
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -243,7 +243,13 @@ async def get_streaks(
 class CalendarCredentials(BaseModel):
     client_id: str
     client_secret: str
-    refresh_token: str
+
+
+class AuthCodeExchange(BaseModel):
+    code: str
+
+
+CALENDAR_SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 
 @router.post("/calendar/credentials")
@@ -252,20 +258,123 @@ async def save_calendar_credentials(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    """Save Google Calendar credentials."""
+    """Save Google Calendar OAuth credentials (client_id and client_secret)."""
     import json
 
     token_data = {
-        "token": None,  # Will be obtained on first use
-        "refresh_token": creds.refresh_token,
-        "token_uri": "https://oauth2.googleapis.com/token",
         "client_id": creds.client_id,
         "client_secret": creds.client_secret,
+        "token": None,
+        "refresh_token": None,
     }
 
     await set_setting(db, "google_calendar_token", json.dumps(token_data))
 
-    return {"status": "saved", "message": "Calendar credentials saved successfully"}
+    return {"status": "saved", "message": "Credentials saved. Now authorize with Google."}
+
+
+@router.get("/calendar/auth-url")
+async def get_calendar_auth_url(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Generate Google OAuth authorization URL."""
+    import json
+    from urllib.parse import urlencode
+
+    # Get stored credentials
+    result = await db.execute(select(Settings).where(Settings.key == "google_calendar_token"))
+    setting = result.scalar_one_or_none()
+
+    if not setting:
+        raise HTTPException(status_code=400, detail="No credentials saved. Save client_id and client_secret first.")
+
+    token_data = json.loads(setting.value)
+    client_id = token_data.get("client_id")
+
+    if not client_id:
+        raise HTTPException(status_code=400, detail="No client_id found")
+
+    # Build redirect URI from request
+    # Use the origin from the request headers or construct from host
+    redirect_uri = f"{request.base_url}api/calendar/callback"
+
+    # Build auth URL
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(CALENDAR_SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+
+    # Store redirect_uri for later use
+    token_data["redirect_uri"] = redirect_uri
+    await set_setting(db, "google_calendar_token", json.dumps(token_data))
+
+    return {"auth_url": auth_url, "redirect_uri": redirect_uri}
+
+
+@router.post("/calendar/exchange-code")
+async def exchange_calendar_code(
+    data: AuthCodeExchange,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Exchange authorization code for tokens."""
+    import json
+
+    # Get stored credentials
+    result = await db.execute(select(Settings).where(Settings.key == "google_calendar_token"))
+    setting = result.scalar_one_or_none()
+
+    if not setting:
+        raise HTTPException(status_code=400, detail="No credentials saved")
+
+    token_data = json.loads(setting.value)
+    client_id = token_data.get("client_id")
+    client_secret = token_data.get("client_secret")
+    redirect_uri = token_data.get("redirect_uri", f"{request.base_url}api/calendar/callback")
+
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=400, detail="Missing client credentials")
+
+    # Exchange code for tokens
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": data.code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": redirect_uri,
+                },
+            )
+
+            if response.status_code != 200:
+                error_data = response.json()
+                return {"status": "error", "error": error_data.get("error_description", "Token exchange failed")}
+
+            tokens = response.json()
+
+            # Save the tokens
+            token_data["token"] = tokens.get("access_token")
+            token_data["refresh_token"] = tokens.get("refresh_token")
+            token_data["token_uri"] = "https://oauth2.googleapis.com/token"
+
+            await set_setting(db, "google_calendar_token", json.dumps(token_data))
+
+            return {"status": "connected", "message": "Calendar connected successfully"}
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 @router.delete("/calendar/credentials")

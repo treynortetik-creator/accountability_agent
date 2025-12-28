@@ -599,21 +599,28 @@ DASHBOARD_HTML = """
                             <label class="form-label">Client Secret</label>
                             <input type="password" id="gcal-client-secret" class="form-input" placeholder="Client secret from Google Cloud Console" />
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">Refresh Token</label>
-                            <input type="password" id="gcal-refresh-token" class="form-input" placeholder="Refresh token from OAuth flow" />
-                        </div>
-                        <div style="display: flex; gap: 12px;">
-                            <button class="btn btn-primary" onclick="saveCalendarCredentials()">Save Credentials</button>
+                        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                            <button class="btn btn-primary" onclick="startCalendarAuth()">Connect Calendar</button>
                             <button class="btn btn-secondary" onclick="disconnectCalendar()">Disconnect</button>
+                        </div>
+                        <div id="auth-code-section" style="display: none;">
+                            <p style="color: var(--warning); font-size: 13px; margin-bottom: 12px;">
+                                After authorizing, paste the code from the redirect URL here:
+                            </p>
+                            <div class="form-group">
+                                <label class="form-label">Authorization Code</label>
+                                <input type="text" id="gcal-auth-code" class="form-input" placeholder="Paste the code from the URL" />
+                            </div>
+                            <button class="btn btn-success" onclick="submitAuthCode()">Submit Code</button>
                         </div>
                     </div>
                     <div style="margin-top: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px; color: var(--text-muted);">
-                        <strong>How to get credentials:</strong><br>
+                        <strong>Setup instructions:</strong><br>
                         1. Go to <a href="https://console.cloud.google.com" target="_blank" style="color: var(--accent);">Google Cloud Console</a><br>
                         2. Create a project and enable the Google Calendar API<br>
-                        3. Create OAuth 2.0 credentials (Desktop app type)<br>
-                        4. Use the <a href="https://developers.google.com/oauthplayground" target="_blank" style="color: var(--accent);">OAuth Playground</a> to get a refresh token
+                        3. Go to Credentials → Create OAuth 2.0 Client ID (Web application)<br>
+                        4. Add <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 4px;">${window.location.origin}/api/calendar/callback</code> as an authorized redirect URI<br>
+                        5. Copy Client ID and Secret here, then click "Connect Calendar"
                     </div>
                 </div>
             </section>
@@ -781,31 +788,56 @@ DASHBOARD_HTML = """
             }
         }
 
-        async function saveCalendarCredentials() {
+        async function startCalendarAuth() {
             const clientId = document.getElementById('gcal-client-id').value.trim();
             const clientSecret = document.getElementById('gcal-client-secret').value.trim();
-            const refreshToken = document.getElementById('gcal-refresh-token').value.trim();
 
-            if (!clientId || !clientSecret || !refreshToken) {
-                showToast('Please fill in all fields', 'error');
+            if (!clientId || !clientSecret) {
+                showToast('Please enter Client ID and Client Secret', 'error');
                 return;
             }
 
-            const result = await api('POST', '/settings/calendar/credentials', {
+            // Save credentials first
+            const saveResult = await api('POST', '/settings/calendar/credentials', {
                 client_id: clientId,
-                client_secret: clientSecret,
-                refresh_token: refreshToken
+                client_secret: clientSecret
             });
 
-            if (result) {
-                showToast('Calendar credentials saved');
-                // Clear the form
+            if (!saveResult) {
+                showToast('Failed to save credentials', 'error');
+                return;
+            }
+
+            // Get auth URL and redirect
+            const result = await api('GET', '/settings/calendar/auth-url');
+            if (result && result.auth_url) {
+                // Show the auth code input section
+                document.getElementById('auth-code-section').style.display = 'block';
+                // Open auth URL in new tab
+                window.open(result.auth_url, '_blank');
+                showToast('Authorize in the new tab, then paste the code here');
+            } else {
+                showToast('Failed to generate auth URL', 'error');
+            }
+        }
+
+        async function submitAuthCode() {
+            const code = document.getElementById('gcal-auth-code').value.trim();
+            if (!code) {
+                showToast('Please enter the authorization code', 'error');
+                return;
+            }
+
+            const result = await api('POST', '/settings/calendar/exchange-code', { code: code });
+            if (result && result.status === 'connected') {
+                showToast('Calendar connected successfully!');
+                document.getElementById('auth-code-section').style.display = 'none';
                 document.getElementById('gcal-client-id').value = '';
                 document.getElementById('gcal-client-secret').value = '';
-                document.getElementById('gcal-refresh-token').value = '';
+                document.getElementById('gcal-auth-code').value = '';
                 loadSettings();
             } else {
-                showToast('Failed to save credentials', 'error');
+                showToast('Failed to connect calendar: ' + (result?.error || 'Unknown error'), 'error');
             }
         }
 
@@ -814,6 +846,7 @@ DASHBOARD_HTML = """
             const result = await api('DELETE', '/settings/calendar/credentials');
             if (result) {
                 showToast('Calendar disconnected');
+                document.getElementById('auth-code-section').style.display = 'none';
                 loadSettings();
             }
         }
