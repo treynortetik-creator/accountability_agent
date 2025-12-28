@@ -66,6 +66,7 @@ async def get_commitment(
 
 
 @router.patch("/{commitment_id}", response_model=CommitmentResponse)
+@router.put("/{commitment_id}", response_model=CommitmentResponse)
 async def update_commitment(
     commitment_id: int,
     commitment_update: CommitmentUpdate,

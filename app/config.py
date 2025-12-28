@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # OpenRouter
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemini-flash-1.5"  # Cheap and fast
+    openrouter_model: str = "google/gemini-2.5-flash"  # Default model - fast and capable
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./warden.db"

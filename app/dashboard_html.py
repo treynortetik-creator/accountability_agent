@@ -596,7 +596,13 @@ DASHBOARD_HTML = """
                     <form onsubmit="createCommitment(event)">
                         <div class="grid-2">
                             <div class="form-group"><label class="form-label">What are you committing to?</label><input type="text" id="commit-title" class="form-input" required /></div>
-                            <div class="form-group"><label class="form-label">Due Date</label><input type="date" id="commit-due" class="form-input" /></div>
+                            <div class="form-group">
+                                <label class="form-label">Due Date & Time</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="date" id="commit-due" class="form-input" style="flex: 1;" />
+                                    <input type="time" id="commit-time" class="form-input" style="width: 120px;" value="12:00" />
+                                </div>
+                            </div>
                         </div>
                         <button type="submit" class="btn btn-primary">Add Commitment</button>
                     </form>
@@ -634,22 +640,29 @@ DASHBOARD_HTML = """
             <section id="section-calendar" class="section">
                 <div class="page-header">
                     <h1 class="page-title">Calendar</h1>
-                    <p class="page-subtitle">Upcoming events and deadlines - synced from Google Calendar</p>
+                    <p class="page-subtitle">Upcoming events, commitments, and deadlines</p>
                 </div>
                 <div class="card" style="margin-bottom: 16px;">
                     <div class="card-header">
-                        <h3 class="card-title">Calendar Status</h3>
+                        <h3 class="card-title">Google Calendar Status</h3>
                         <span id="calendar-sync-status" class="badge badge-pending">Not synced</span>
                     </div>
-                    <div style="display: flex; gap: 12px; align-items: center;">
-                        <button class="btn btn-primary" onclick="syncCalendar()">Sync Now</button>
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="syncCalendar()">Sync Google Calendar</button>
                         <button class="btn btn-secondary" onclick="addManualEvent()">+ Manual Event</button>
                         <span id="last-sync-info" style="color: var(--text-muted); font-size: 13px;"></span>
                     </div>
                 </div>
+                <div class="card" style="margin-bottom: 16px;">
+                    <div class="card-header">
+                        <h3 class="card-title">📋 Upcoming Commitments</h3>
+                        <span id="commitment-count" class="badge badge-pending">0</span>
+                    </div>
+                    <div id="calendar-commitments"><div class="empty-state">No pending commitments with deadlines</div></div>
+                </div>
                 <div class="card">
                     <div class="card-header">
-                        <h3 class="card-title">Upcoming Events (14 days)</h3>
+                        <h3 class="card-title">📅 Calendar Events (14 days)</h3>
                         <span id="event-count" class="badge badge-pending">0</span>
                     </div>
                     <div id="calendar-events"><div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events. Connect Google Calendar in Settings to sync.</p></div></div>
@@ -927,7 +940,32 @@ DASHBOARD_HTML = """
             const commits = await api('GET', `/commitments?status_filter=${currentCommitmentFilter}&limit=50`);
             const container = document.getElementById('commitments-list');
             if (!commits || !commits.length) { container.innerHTML = '<div class="empty-state">No commitments found</div>'; return; }
-            container.innerHTML = commits.map(c => `<div class="list-item"><div><div class="list-item-title">${c.title}</div><div class="list-item-meta">${c.due_date ? '📅 ' + new Date(c.due_date).toLocaleDateString() : ''} ${c.deferred_count > 0 ? '<span style="color: var(--warning);">🔄 Deferred ' + c.deferred_count + 'x</span>' : ''}</div></div><div class="list-item-actions">${c.status === 'pending' ? `<button class="btn btn-sm btn-success" onclick="completeCommitment(${c.id})">✓</button><button class="btn btn-sm btn-warning" onclick="deferCommitment(${c.id})">Defer</button>` : `<span class="badge badge-${c.status}">${c.status}</span>`}</div></div>`).join('');
+            container.innerHTML = commits.map(c => {
+                const dueDate = c.due_date ? new Date(c.due_date) : null;
+                const dateStr = dueDate ? dueDate.toLocaleDateString() : '';
+                const timeStr = dueDate ? dueDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+                const dueDisplay = dueDate ? `📅 ${dateStr} at ${timeStr}` : '';
+                const deferredBadge = c.deferred_count > 0 ? `<span style="color: var(--warning);">🔄 Deferred ${c.deferred_count}x</span>` : '';
+
+                if (c.status === 'pending') {
+                    return `<div class="list-item">
+                        <div style="flex: 1;">
+                            <div class="list-item-title">${c.title}</div>
+                            <div class="list-item-meta">${dueDisplay} ${deferredBadge}</div>
+                        </div>
+                        <div class="list-item-actions" style="display: flex; gap: 8px; align-items: center;">
+                            <button class="btn btn-sm btn-secondary" onclick="editCommitmentTime(${c.id}, '${c.title}', '${c.due_date || ''}')">📅</button>
+                            <button class="btn btn-sm btn-success" onclick="completeCommitment(${c.id})">✓</button>
+                            <button class="btn btn-sm btn-warning" onclick="deferCommitment(${c.id})">Defer</button>
+                        </div>
+                    </div>`;
+                } else {
+                    return `<div class="list-item">
+                        <div><div class="list-item-title">${c.title}</div><div class="list-item-meta">${dueDisplay} ${deferredBadge}</div></div>
+                        <div class="list-item-actions"><span class="badge badge-${c.status}">${c.status}</span></div>
+                    </div>`;
+                }
+            }).join('');
         }
 
         function filterCommitments(status) {
@@ -941,8 +979,34 @@ DASHBOARD_HTML = """
             e.preventDefault();
             const data = { title: document.getElementById('commit-title').value };
             const due = document.getElementById('commit-due').value;
-            if (due) data.due_date = due + 'T23:59:59';
-            if (await api('POST', '/commitments', data)) { showToast('Commitment added'); document.getElementById('commit-title').value = ''; document.getElementById('commit-due').value = ''; loadCommitments(); loadDashboard(); }
+            const time = document.getElementById('commit-time').value || '12:00';
+            if (due) data.due_date = due + 'T' + time + ':00';
+            if (await api('POST', '/commitments', data)) {
+                showToast('Commitment added');
+                document.getElementById('commit-title').value = '';
+                document.getElementById('commit-due').value = '';
+                document.getElementById('commit-time').value = '12:00';
+                loadCommitments();
+                loadDashboard();
+            }
+        }
+
+        async function editCommitmentTime(id, title, currentDueDate) {
+            const dueDate = currentDueDate ? new Date(currentDueDate) : new Date();
+            const dateVal = dueDate.toISOString().split('T')[0];
+            const timeVal = dueDate.toTimeString().slice(0, 5);
+
+            const newDate = prompt(`Edit due date for "${title}" (YYYY-MM-DD):`, dateVal);
+            if (!newDate) return;
+
+            const newTime = prompt(`Edit due time (HH:MM):`, timeVal);
+            if (!newTime) return;
+
+            const newDueDate = newDate + 'T' + newTime + ':00';
+            if (await api('PUT', `/commitments/${id}`, { due_date: newDueDate })) {
+                showToast('Due date updated');
+                loadCommitments();
+            }
         }
 
         async function completeCommitment(id) { await api('POST', `/commitments/${id}/complete`); showToast('Marked complete'); loadCommitments(); loadDashboard(); }
@@ -968,6 +1032,52 @@ DASHBOARD_HTML = """
         async function deleteGoal(id) { if (!confirm('Delete this goal?')) return; await api('DELETE', `/goals/${id}`); showToast('Goal deleted'); loadGoals(); }
 
         async function loadCalendarEvents() {
+            // Load commitments for calendar view
+            const commits = await api('GET', '/commitments?status_filter=pending&limit=50');
+            const commitContainer = document.getElementById('calendar-commitments');
+            const commitCountBadge = document.getElementById('commitment-count');
+
+            const upcomingCommits = (commits || []).filter(c => c.due_date);
+            if (!upcomingCommits.length) {
+                commitContainer.innerHTML = '<div class="empty-state">No pending commitments with deadlines</div>';
+                commitCountBadge.textContent = '0';
+            } else {
+                commitCountBadge.textContent = upcomingCommits.length;
+
+                // Sort by due date
+                upcomingCommits.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+
+                // Group by date
+                const grouped = {};
+                upcomingCommits.forEach(c => {
+                    const date = new Date(c.due_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                    if (!grouped[date]) grouped[date] = [];
+                    grouped[date].push(c);
+                });
+
+                let html = '';
+                for (const [date, dayCommits] of Object.entries(grouped)) {
+                    html += `<div style="margin-bottom: 16px;">
+                        <div style="font-weight: 600; color: var(--warning); margin-bottom: 8px; font-size: 13px;">${date}</div>`;
+                    dayCommits.forEach(c => {
+                        const time = new Date(c.due_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        const deferred = c.deferred_count > 0 ? ` <span style="color: var(--warning); font-size: 11px;">(deferred ${c.deferred_count}x)</span>` : '';
+                        html += `<div class="calendar-event" style="border-left: 3px solid var(--warning);">
+                            <div class="event-time">${time}</div>
+                            <div>
+                                <div class="event-title">📋 ${c.title}${deferred}</div>
+                            </div>
+                            <div style="margin-left: auto;">
+                                <button class="btn btn-sm btn-success" onclick="completeCommitment(${c.id}); loadCalendarEvents();">✓</button>
+                            </div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+                commitContainer.innerHTML = html;
+            }
+
+            // Load calendar events
             const events = await api('GET', '/calendar/events?days_ahead=14');
             const container = document.getElementById('calendar-events');
             const countBadge = document.getElementById('event-count');
@@ -984,20 +1094,20 @@ DASHBOARD_HTML = """
             syncStatus.className = 'badge badge-completed';
 
             // Group events by date
-            const grouped = {};
+            const eventGrouped = {};
             events.forEach(e => {
                 const date = new Date(e.start_time).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                if (!grouped[date]) grouped[date] = [];
-                grouped[date].push(e);
+                if (!eventGrouped[date]) eventGrouped[date] = [];
+                eventGrouped[date].push(e);
             });
 
-            let html = '';
-            for (const [date, dayEvents] of Object.entries(grouped)) {
-                html += `<div style="margin-bottom: 16px;">
+            let eventsHtml = '';
+            for (const [date, dayEvents] of Object.entries(eventGrouped)) {
+                eventsHtml += `<div style="margin-bottom: 16px;">
                     <div style="font-weight: 600; color: var(--accent); margin-bottom: 8px; font-size: 13px;">${date}</div>`;
                 dayEvents.forEach(e => {
                     const time = e.all_day ? 'All day' : new Date(e.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                    html += `<div class="calendar-event">
+                    eventsHtml += `<div class="calendar-event">
                         <div class="event-time">${time}</div>
                         <div>
                             <div class="event-title">${e.title}</div>
@@ -1005,9 +1115,9 @@ DASHBOARD_HTML = """
                         </div>
                     </div>`;
                 });
-                html += '</div>';
+                eventsHtml += '</div>';
             }
-            container.innerHTML = html;
+            container.innerHTML = eventsHtml;
         }
 
         async function syncCalendar() {
