@@ -376,57 +376,27 @@ DASHBOARD_HTML = """
             .main-content { margin-left: 0; padding: 20px; }
         }
 
-        .model-search-container { margin-bottom: 16px; position: relative; }
-        .model-search {
+        .model-select {
             width: 100%;
             background: var(--bg-tertiary);
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 12px 14px 12px 40px;
+            padding: 14px 16px;
             color: var(--text-primary);
             font-size: 14px;
-        }
-        .model-search:focus { outline: none; border-color: var(--accent); }
-        .model-search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
-        .model-list { max-height: 400px; overflow-y: auto; }
-        .model-list::-webkit-scrollbar { width: 6px; }
-        .model-list::-webkit-scrollbar-track { background: var(--bg-tertiary); border-radius: 3px; }
-        .model-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-        .model-list::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-        .model-group { margin-bottom: 16px; }
-        .model-group-header {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-muted);
-            padding: 8px 0;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 8px;
-            position: sticky;
-            top: 0;
-            background: var(--bg-secondary);
-            z-index: 1;
-        }
-        .model-option {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 12px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            margin-bottom: 6px;
+            font-family: inherit;
             cursor: pointer;
-            transition: all 0.15s;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239090a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
         }
-        .model-option:hover { border-color: var(--text-muted); background: var(--bg-hover); }
-        .model-option.selected { border-color: var(--accent); background: rgba(255, 59, 59, 0.1); }
-        .model-name { font-weight: 500; font-size: 13px; }
-        .model-id { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
-        .model-meta { display: flex; align-items: center; gap: 12px; }
-        .model-cost { font-size: 12px; color: var(--warning); }
-        .model-context { font-size: 11px; color: var(--text-muted); }
+        .model-select:focus { outline: none; border-color: var(--accent); }
+        .model-select option { background: var(--bg-secondary); color: var(--text-primary); padding: 8px; }
+        .model-select optgroup { background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; }
+        .model-info { margin-top: 12px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 13px; }
+        .model-info-label { color: var(--text-muted); margin-bottom: 4px; }
+        .model-info-value { color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
         .model-count { font-size: 12px; color: var(--text-secondary); margin-left: 8px; }
 
         .calendar-event {
@@ -588,11 +558,13 @@ DASHBOARD_HTML = """
                         <div class="card-header">
                             <h3 class="card-title">LLM Model<span id="model-count" class="model-count"></span></h3>
                         </div>
-                        <div class="model-search-container">
-                            <span class="model-search-icon">🔍</span>
-                            <input type="text" id="model-search" class="model-search" placeholder="Search models..." oninput="filterModels()">
+                        <select id="model-selector" class="model-select" onchange="selectModel(this.value)">
+                            <option value="">Loading models...</option>
+                        </select>
+                        <div id="model-info" class="model-info" style="display: none;">
+                            <div class="model-info-label">Model ID</div>
+                            <div id="model-id-display" class="model-info-value"></div>
                         </div>
-                        <div id="model-selector" class="model-list"><div class="empty-state">Loading...</div></div>
                     </div>
                     <div class="card">
                         <div class="card-header"><h3 class="card-title">Quick Actions</h3></div>
@@ -748,12 +720,14 @@ DASHBOARD_HTML = """
                 allModels = models;
                 currentModel = settings.openrouter_model;
                 document.getElementById('model-count').textContent = ` (${models.length} available)`;
-                renderModels(models);
+                renderModelDropdown(models, currentModel);
                 document.getElementById('system-prompt').value = settings.system_prompt;
             }
         }
 
-        function renderModels(models) {
+        function renderModelDropdown(models, selectedId) {
+            const select = document.getElementById('model-selector');
+
             // Group by provider
             const grouped = {};
             models.forEach(m => {
@@ -764,38 +738,39 @@ DASHBOARD_HTML = """
             // Sort providers alphabetically
             const providers = Object.keys(grouped).sort();
 
-            let html = '';
+            let html = '<option value="">-- Select a model --</option>';
             providers.forEach(provider => {
-                const providerModels = grouped[provider];
-                html += `<div class="model-group"><div class="model-group-header">${provider} (${providerModels.length})</div>`;
-                providerModels.forEach(m => {
-                    const contextStr = m.context_length ? Math.round(m.context_length / 1000) + 'k ctx' : '';
-                    html += `<div class="model-option ${m.id === currentModel ? 'selected' : ''}" onclick="selectModel('${m.id}')" title="${m.description || m.id}">
-                        <div><div class="model-name">${m.name}</div><div class="model-id">${m.id}</div></div>
-                        <div class="model-meta"><span class="model-context">${contextStr}</span><span class="model-cost">${m.cost}</span></div>
-                    </div>`;
+                html += `<optgroup label="${provider} (${grouped[provider].length})">`;
+                grouped[provider].forEach(m => {
+                    const ctxStr = m.context_length ? ` [${Math.round(m.context_length / 1000)}k]` : '';
+                    const selected = m.id === selectedId ? ' selected' : '';
+                    html += `<option value="${m.id}"${selected}>${m.name}${ctxStr} ${m.cost}</option>`;
                 });
-                html += '</div>';
+                html += '</optgroup>';
             });
 
-            document.getElementById('model-selector').innerHTML = html || '<div class="empty-state">No models found</div>';
+            select.innerHTML = html;
+
+            // Update model info display
+            updateModelInfo(selectedId);
         }
 
-        function filterModels() {
-            const query = document.getElementById('model-search').value.toLowerCase();
-            if (!query) { renderModels(allModels); return; }
-            const filtered = allModels.filter(m =>
-                m.name.toLowerCase().includes(query) ||
-                m.id.toLowerCase().includes(query) ||
-                m.provider.toLowerCase().includes(query)
-            );
-            renderModels(filtered);
+        function updateModelInfo(modelId) {
+            const infoDiv = document.getElementById('model-info');
+            const idDisplay = document.getElementById('model-id-display');
+            if (modelId) {
+                idDisplay.textContent = modelId;
+                infoDiv.style.display = 'block';
+            } else {
+                infoDiv.style.display = 'none';
+            }
         }
 
         async function selectModel(modelId) {
+            if (!modelId) return;
             if (await api('PUT', '/settings/model', { value: modelId })) {
                 currentModel = modelId;
-                renderModels(allModels);
+                updateModelInfo(modelId);
                 showToast('Model updated');
             }
         }

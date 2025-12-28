@@ -1,7 +1,6 @@
 """Settings API router."""
 
 import httpx
-import asyncio
 from typing import List, Optional
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +11,6 @@ from app.database import get_db
 from app.auth import verify_api_key
 from app.db_models import Settings, ChatMessage
 from app.llm import WARDEN_SYSTEM_PROMPT
-from app.config import get_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -35,12 +33,11 @@ async def fetch_openrouter_models() -> List[dict]:
         return _models_cache["models"]
 
     try:
-        config = get_settings()
         async with httpx.AsyncClient() as client:
+            # OpenRouter's model list is public, no auth needed
             response = await client.get(
                 "https://openrouter.ai/api/v1/models",
-                headers={"Authorization": f"Bearer {config.openrouter_api_key}"},
-                timeout=10.0
+                timeout=15.0
             )
             response.raise_for_status()
             data = response.json()
@@ -168,14 +165,10 @@ async def update_model(
     _: str = Depends(verify_api_key),
 ):
     """Update the LLM model."""
-    # Validate model exists in OpenRouter
-    models = await fetch_openrouter_models()
-    valid_ids = [m["id"] for m in models]
-
-    if update.value not in valid_ids:
+    if not update.value or "/" not in update.value:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid model ID: {update.value}. Model not found in OpenRouter."
+            detail="Invalid model ID format. Must be provider/model-name"
         )
 
     await set_setting(db, "openrouter_model", update.value)
