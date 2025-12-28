@@ -582,6 +582,40 @@ DASHBOARD_HTML = """
                     <div class="form-group"><textarea id="system-prompt" class="form-textarea" style="min-height: 300px;"></textarea></div>
                     <button class="btn btn-primary" onclick="savePrompt()">Save Prompt</button>
                 </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Google Calendar Integration</h3>
+                        <span id="calendar-status" class="badge badge-pending">Not Connected</span>
+                    </div>
+                    <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+                        Connect your Google Calendar to enable meeting-aware check-ins and OOO detection.
+                    </p>
+                    <div id="calendar-config-form">
+                        <div class="form-group">
+                            <label class="form-label">Client ID</label>
+                            <input type="text" id="gcal-client-id" class="form-input" placeholder="your-client-id.apps.googleusercontent.com" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Client Secret</label>
+                            <input type="password" id="gcal-client-secret" class="form-input" placeholder="Client secret from Google Cloud Console" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Refresh Token</label>
+                            <input type="password" id="gcal-refresh-token" class="form-input" placeholder="Refresh token from OAuth flow" />
+                        </div>
+                        <div style="display: flex; gap: 12px;">
+                            <button class="btn btn-primary" onclick="saveCalendarCredentials()">Save Credentials</button>
+                            <button class="btn btn-secondary" onclick="disconnectCalendar()">Disconnect</button>
+                        </div>
+                    </div>
+                    <div style="margin-top: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px; color: var(--text-muted);">
+                        <strong>How to get credentials:</strong><br>
+                        1. Go to <a href="https://console.cloud.google.com" target="_blank" style="color: var(--accent);">Google Cloud Console</a><br>
+                        2. Create a project and enable the Google Calendar API<br>
+                        3. Create OAuth 2.0 credentials (Desktop app type)<br>
+                        4. Use the <a href="https://developers.google.com/oauthplayground" target="_blank" style="color: var(--accent);">OAuth Playground</a> to get a refresh token
+                    </div>
+                </div>
             </section>
         </main>
     </div>
@@ -734,6 +768,53 @@ DASHBOARD_HTML = """
                 document.getElementById('model-count').textContent = ` (${models.length} available)`;
                 renderModelDropdown(models, currentModel);
                 document.getElementById('system-prompt').value = settings.system_prompt;
+
+                // Update calendar status
+                const calStatus = document.getElementById('calendar-status');
+                if (settings.google_calendar_connected) {
+                    calStatus.textContent = 'Connected';
+                    calStatus.className = 'badge badge-completed';
+                } else {
+                    calStatus.textContent = 'Not Connected';
+                    calStatus.className = 'badge badge-pending';
+                }
+            }
+        }
+
+        async function saveCalendarCredentials() {
+            const clientId = document.getElementById('gcal-client-id').value.trim();
+            const clientSecret = document.getElementById('gcal-client-secret').value.trim();
+            const refreshToken = document.getElementById('gcal-refresh-token').value.trim();
+
+            if (!clientId || !clientSecret || !refreshToken) {
+                showToast('Please fill in all fields', 'error');
+                return;
+            }
+
+            const result = await api('POST', '/settings/calendar/credentials', {
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: refreshToken
+            });
+
+            if (result) {
+                showToast('Calendar credentials saved');
+                // Clear the form
+                document.getElementById('gcal-client-id').value = '';
+                document.getElementById('gcal-client-secret').value = '';
+                document.getElementById('gcal-refresh-token').value = '';
+                loadSettings();
+            } else {
+                showToast('Failed to save credentials', 'error');
+            }
+        }
+
+        async function disconnectCalendar() {
+            if (!confirm('Disconnect Google Calendar?')) return;
+            const result = await api('DELETE', '/settings/calendar/credentials');
+            if (result) {
+                showToast('Calendar disconnected');
+                loadSettings();
             }
         }
 

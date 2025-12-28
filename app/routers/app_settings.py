@@ -238,3 +238,47 @@ async def get_streaks(
     """Get current streak information."""
     from app.streaks import get_streak_context
     return await get_streak_context(db)
+
+
+class CalendarCredentials(BaseModel):
+    client_id: str
+    client_secret: str
+    refresh_token: str
+
+
+@router.post("/calendar/credentials")
+async def save_calendar_credentials(
+    creds: CalendarCredentials,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Save Google Calendar credentials."""
+    import json
+
+    token_data = {
+        "token": None,  # Will be obtained on first use
+        "refresh_token": creds.refresh_token,
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+    }
+
+    await set_setting(db, "google_calendar_token", json.dumps(token_data))
+
+    return {"status": "saved", "message": "Calendar credentials saved successfully"}
+
+
+@router.delete("/calendar/credentials")
+async def delete_calendar_credentials(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Remove Google Calendar credentials."""
+    result = await db.execute(select(Settings).where(Settings.key == "google_calendar_token"))
+    setting = result.scalar_one_or_none()
+
+    if setting:
+        await db.delete(setting)
+        await db.flush()
+
+    return {"status": "deleted", "message": "Calendar credentials removed"}
