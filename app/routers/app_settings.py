@@ -1,6 +1,9 @@
 """Settings API router."""
 
+import httpx
+import asyncio
 from typing import List, Optional
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -9,20 +12,90 @@ from app.database import get_db
 from app.auth import verify_api_key
 from app.db_models import Settings, ChatMessage
 from app.llm import WARDEN_SYSTEM_PROMPT
+from app.config import get_settings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
-# Available OpenRouter models
-AVAILABLE_MODELS = [
-    {"id": "google/gemini-flash-1.5", "name": "Gemini Flash 1.5", "provider": "Google", "cost": "$"},
-    {"id": "google/gemini-pro-1.5", "name": "Gemini Pro 1.5", "provider": "Google", "cost": "$$"},
-    {"id": "openai/gpt-4o-mini", "name": "GPT-4o Mini", "provider": "OpenAI", "cost": "$"},
-    {"id": "openai/gpt-4o", "name": "GPT-4o", "provider": "OpenAI", "cost": "$$$"},
-    {"id": "anthropic/claude-3-haiku", "name": "Claude 3 Haiku", "provider": "Anthropic", "cost": "$"},
-    {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "provider": "Anthropic", "cost": "$$"},
-    {"id": "meta-llama/llama-3.1-70b-instruct", "name": "Llama 3.1 70B", "provider": "Meta", "cost": "$"},
-    {"id": "mistralai/mistral-large", "name": "Mistral Large", "provider": "Mistral", "cost": "$$"},
-]
+# Cache for OpenRouter models
+_models_cache = {
+    "models": [],
+    "last_fetch": None,
+    "cache_duration": timedelta(hours=1)
+}
+
+
+async def fetch_openrouter_models() -> List[dict]:
+    """Fetch all available models from OpenRouter API."""
+    global _models_cache
+
+    # Return cached if still valid
+    if (_models_cache["last_fetch"] and
+        datetime.now() - _models_cache["last_fetch"] < _models_cache["cache_duration"] and
+        _models_cache["models"]):
+        return _models_cache["models"]
+
+    try:
+        config = get_settings()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {config.openrouter_api_key}"},
+                timeout=10.0
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            models = []
+            for model in data.get("data", []):
+                model_id = model.get("id", "")
+                name = model.get("name", model_id)
+
+                # Extract provider from model ID (e.g., "openai/gpt-4" -> "OpenAI")
+                provider = model_id.split("/")[0].title() if "/" in model_id else "Unknown"
+
+                # Calculate cost indicator based on pricing
+                pricing = model.get("pricing", {})
+                prompt_cost = float(pricing.get("prompt", "0") or "0")
+
+                if prompt_cost == 0:
+                    cost = "Free"
+                elif prompt_cost < 0.0001:
+                    cost = "$"
+                elif prompt_cost < 0.001:
+                    cost = "$$"
+                elif prompt_cost < 0.01:
+                    cost = "$$$"
+                else:
+                    cost = "$$$$"
+
+                models.append({
+                    "id": model_id,
+                    "name": name,
+                    "provider": provider,
+                    "cost": cost,
+                    "context_length": model.get("context_length", 0),
+                    "description": model.get("description", "")
+                })
+
+            # Sort by provider, then by name
+            models.sort(key=lambda x: (x["provider"].lower(), x["name"].lower()))
+
+            # Update cache
+            _models_cache["models"] = models
+            _models_cache["last_fetch"] = datetime.now()
+
+            return models
+
+    except Exception as e:
+        # If fetch fails and we have cached data, return that
+        if _models_cache["models"]:
+            return _models_cache["models"]
+        # Otherwise return a minimal fallback list
+        return [
+            {"id": "google/gemini-flash-1.5", "name": "Gemini Flash 1.5", "provider": "Google", "cost": "$", "context_length": 0, "description": ""},
+            {"id": "openai/gpt-4o-mini", "name": "GPT-4o Mini", "provider": "OpenAI", "cost": "$", "context_length": 0, "description": ""},
+            {"id": "anthropic/claude-3-haiku", "name": "Claude 3 Haiku", "provider": "Anthropic", "cost": "$", "context_length": 0, "description": ""},
+        ]
 
 
 class SettingUpdate(BaseModel):
@@ -67,8 +140,8 @@ async def set_setting(db: AsyncSession, key: str, value: str) -> None:
 
 @router.get("/models")
 async def list_models(_: str = Depends(verify_api_key)):
-    """List available LLM models."""
-    return AVAILABLE_MODELS
+    """List all available LLM models from OpenRouter."""
+    return await fetch_openrouter_models()
 
 
 @router.get("", response_model=SettingsResponse)
@@ -95,9 +168,15 @@ async def update_model(
     _: str = Depends(verify_api_key),
 ):
     """Update the LLM model."""
-    valid_models = [m["id"] for m in AVAILABLE_MODELS]
-    if update.value not in valid_models:
-        raise HTTPException(status_code=400, detail=f"Invalid model. Choose from: {valid_models}")
+    # Validate model exists in OpenRouter
+    models = await fetch_openrouter_models()
+    valid_ids = [m["id"] for m in models]
+
+    if update.value not in valid_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model ID: {update.value}. Model not found in OpenRouter."
+        )
 
     await set_setting(db, "openrouter_model", update.value)
     return {"status": "updated", "model": update.value}

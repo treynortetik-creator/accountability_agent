@@ -376,22 +376,58 @@ DASHBOARD_HTML = """
             .main-content { margin-left: 0; padding: 20px; }
         }
 
+        .model-search-container { margin-bottom: 16px; position: relative; }
+        .model-search {
+            width: 100%;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px 12px 40px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+        .model-search:focus { outline: none; border-color: var(--accent); }
+        .model-search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
+        .model-list { max-height: 400px; overflow-y: auto; }
+        .model-list::-webkit-scrollbar { width: 6px; }
+        .model-list::-webkit-scrollbar-track { background: var(--bg-tertiary); border-radius: 3px; }
+        .model-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        .model-list::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        .model-group { margin-bottom: 16px; }
+        .model-group-header {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 8px;
+            position: sticky;
+            top: 0;
+            background: var(--bg-secondary);
+            z-index: 1;
+        }
         .model-option {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 14px 16px;
+            padding: 10px 12px;
             background: var(--bg-tertiary);
             border: 1px solid var(--border);
             border-radius: 8px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             cursor: pointer;
+            transition: all 0.15s;
         }
-        .model-option:hover { border-color: var(--text-muted); }
-        .model-option.selected { border-color: var(--accent); background: rgba(255, 59, 59, 0.05); }
-        .model-name { font-weight: 500; }
-        .model-provider { font-size: 12px; color: var(--text-muted); }
-        .model-cost { font-size: 13px; color: var(--warning); }
+        .model-option:hover { border-color: var(--text-muted); background: var(--bg-hover); }
+        .model-option.selected { border-color: var(--accent); background: rgba(255, 59, 59, 0.1); }
+        .model-name { font-weight: 500; font-size: 13px; }
+        .model-id { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+        .model-meta { display: flex; align-items: center; gap: 12px; }
+        .model-cost { font-size: 12px; color: var(--warning); }
+        .model-context { font-size: 11px; color: var(--text-muted); }
+        .model-count { font-size: 12px; color: var(--text-secondary); margin-left: 8px; }
 
         .calendar-event {
             display: flex;
@@ -549,8 +585,14 @@ DASHBOARD_HTML = """
                 </div>
                 <div class="grid-2">
                     <div class="card">
-                        <div class="card-header"><h3 class="card-title">LLM Model</h3></div>
-                        <div id="model-selector"><div class="empty-state">Loading...</div></div>
+                        <div class="card-header">
+                            <h3 class="card-title">LLM Model<span id="model-count" class="model-count"></span></h3>
+                        </div>
+                        <div class="model-search-container">
+                            <span class="model-search-icon">🔍</span>
+                            <input type="text" id="model-search" class="model-search" placeholder="Search models..." oninput="filterModels()">
+                        </div>
+                        <div id="model-selector" class="model-list"><div class="empty-state">Loading...</div></div>
                     </div>
                     <div class="card">
                         <div class="card-header"><h3 class="card-title">Quick Actions</h3></div>
@@ -696,16 +738,67 @@ DASHBOARD_HTML = """
             container.innerHTML = events.map(e => `<div class="calendar-event"><div class="event-time">${e.all_day ? 'All day' : new Date(e.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div><div><div class="event-title">${e.title}</div>${e.location ? `<div class="event-location">📍 ${e.location}</div>` : ''}</div></div>`).join('');
         }
 
+        let allModels = [];
+        let currentModel = '';
+
         async function loadSettings() {
             const models = await api('GET', '/settings/models');
             const settings = await api('GET', '/settings');
             if (models && settings) {
-                document.getElementById('model-selector').innerHTML = models.map(m => `<div class="model-option ${m.id === settings.openrouter_model ? 'selected' : ''}" onclick="selectModel('${m.id}')"><div><div class="model-name">${m.name}</div><div class="model-provider">${m.provider}</div></div><div class="model-cost">${m.cost}</div></div>`).join('');
+                allModels = models;
+                currentModel = settings.openrouter_model;
+                document.getElementById('model-count').textContent = ` (${models.length} available)`;
+                renderModels(models);
                 document.getElementById('system-prompt').value = settings.system_prompt;
             }
         }
 
-        async function selectModel(modelId) { if (await api('PUT', '/settings/model', { value: modelId })) { showToast('Model updated'); loadSettings(); } }
+        function renderModels(models) {
+            // Group by provider
+            const grouped = {};
+            models.forEach(m => {
+                if (!grouped[m.provider]) grouped[m.provider] = [];
+                grouped[m.provider].push(m);
+            });
+
+            // Sort providers alphabetically
+            const providers = Object.keys(grouped).sort();
+
+            let html = '';
+            providers.forEach(provider => {
+                const providerModels = grouped[provider];
+                html += `<div class="model-group"><div class="model-group-header">${provider} (${providerModels.length})</div>`;
+                providerModels.forEach(m => {
+                    const contextStr = m.context_length ? Math.round(m.context_length / 1000) + 'k ctx' : '';
+                    html += `<div class="model-option ${m.id === currentModel ? 'selected' : ''}" onclick="selectModel('${m.id}')" title="${m.description || m.id}">
+                        <div><div class="model-name">${m.name}</div><div class="model-id">${m.id}</div></div>
+                        <div class="model-meta"><span class="model-context">${contextStr}</span><span class="model-cost">${m.cost}</span></div>
+                    </div>`;
+                });
+                html += '</div>';
+            });
+
+            document.getElementById('model-selector').innerHTML = html || '<div class="empty-state">No models found</div>';
+        }
+
+        function filterModels() {
+            const query = document.getElementById('model-search').value.toLowerCase();
+            if (!query) { renderModels(allModels); return; }
+            const filtered = allModels.filter(m =>
+                m.name.toLowerCase().includes(query) ||
+                m.id.toLowerCase().includes(query) ||
+                m.provider.toLowerCase().includes(query)
+            );
+            renderModels(filtered);
+        }
+
+        async function selectModel(modelId) {
+            if (await api('PUT', '/settings/model', { value: modelId })) {
+                currentModel = modelId;
+                renderModels(allModels);
+                showToast('Model updated');
+            }
+        }
         async function savePrompt() { if (await api('PUT', '/settings/prompt', { value: document.getElementById('system-prompt').value })) showToast('Prompt saved'); }
         async function resetPrompt() { const result = await api('POST', '/settings/prompt/reset'); if (result) { document.getElementById('system-prompt').value = result.prompt; showToast('Prompt reset'); } }
         async function triggerCheckin() { await api('POST', '/trigger/checkin'); showToast('Check-in triggered'); setTimeout(loadDashboard, 2000); }
