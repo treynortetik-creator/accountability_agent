@@ -366,6 +366,90 @@ async def silence_detector_job():
             await db.rollback()
 
 
+async def commitment_reminder_job():
+    """Send 90-minute reminders for upcoming commitment deadlines."""
+    logger.info("Running commitment reminder job")
+
+    async with async_session_maker() as db:
+        try:
+            import pytz
+            tz = pytz.timezone(settings.timezone)
+            now = datetime.now(tz)
+            # Convert to naive UTC for database comparison
+            now_utc = datetime.utcnow()
+
+            # Find commitments due in the next 90-105 minutes (15-min window to catch them)
+            reminder_start = now_utc + timedelta(minutes=75)
+            reminder_end = now_utc + timedelta(minutes=105)
+
+            result = await db.execute(
+                select(Commitment).where(
+                    and_(
+                        Commitment.status == CommitmentStatus.PENDING,
+                        Commitment.due_date.isnot(None),
+                        Commitment.due_date >= reminder_start,
+                        Commitment.due_date <= reminder_end,
+                    )
+                )
+            )
+            upcoming = result.scalars().all()
+
+            for commitment in upcoming:
+                # Check if we already sent a reminder for this commitment
+                two_hours_ago = datetime.utcnow() - timedelta(hours=2)
+                recent_reminder = await db.execute(
+                    select(CheckIn).where(
+                        and_(
+                            CheckIn.check_in_type == CheckInType.DEADLINE_REMINDER,
+                            CheckIn.sent_at > two_hours_ago,
+                            CheckIn.message_sent.contains(commitment.title),
+                        )
+                    )
+                )
+                if recent_reminder.scalar_one_or_none():
+                    continue
+
+                # Calculate time until due
+                minutes_until = (commitment.due_date - now_utc).total_seconds() / 60
+                due_time_str = commitment.due_date.strftime('%I:%M %p').lstrip('0')
+
+                # Generate a conversational reminder
+                reminder_messages = [
+                    f"Heads up - \"{commitment.title}\" is due at {due_time_str}. That's about 90 minutes from now. Where are you on this?",
+                    f"Clock's ticking on \"{commitment.title}\" - due at {due_time_str}. You've got about 90 minutes. Status?",
+                    f"Just checking in on \"{commitment.title}\" - it's coming up at {due_time_str}. Are you on track or do we need to talk about this?",
+                ]
+                import random
+                message = random.choice(reminder_messages)
+
+                msg_id = await telegram_service.send_message(message)
+
+                # Record reminder
+                checkin = CheckIn(
+                    check_in_type=CheckInType.DEADLINE_REMINDER,
+                    message_sent=message,
+                    telegram_message_id=msg_id,
+                )
+                db.add(checkin)
+
+                # Save to chat history
+                chat_msg = ChatMessage(
+                    role="warden",
+                    content=message,
+                    message_type="deadline_reminder",
+                    telegram_message_id=msg_id,
+                )
+                db.add(chat_msg)
+
+                logger.info(f"Sent 90-min reminder for: {commitment.title}")
+
+            await db.commit()
+
+        except Exception as e:
+            logger.error(f"Commitment reminder failed: {e}")
+            await db.rollback()
+
+
 async def deadline_alert_job():
     """Check for upcoming deadlines and send alerts."""
     logger.info("Running deadline alert job")
@@ -497,6 +581,15 @@ def setup_scheduler():
         replace_existing=True,
     )
     logger.info("Scheduled deadline alerts every 6 hours")
+
+    # 90-minute commitment reminders - check every 15 minutes
+    scheduler.add_job(
+        commitment_reminder_job,
+        IntervalTrigger(minutes=15),
+        id="commitment_reminders",
+        replace_existing=True,
+    )
+    logger.info("Scheduled commitment reminders every 15 minutes")
 
     scheduler.start()
     logger.info("Scheduler started")

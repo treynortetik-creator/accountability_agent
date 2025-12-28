@@ -5,13 +5,111 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select, and_
 from app.database import async_session_maker
-from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType
+from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus
 from app.telegram_bot import parse_telegram_update, telegram_service
 from app.llm import analyze_response, parse_commitment
 from app.scheduler import get_context
 from app.streaks import update_response_streak
+import re
 
 logger = logging.getLogger(__name__)
+
+
+async def try_handle_completion(db, message_text: str) -> tuple[bool, str | None]:
+    """Check if user is marking a commitment as complete.
+
+    Handles phrases like:
+    - "done", "finished", "completed", "shipped"
+    - "done with X", "finished X", "shipped X"
+    - "I finished the blog post"
+
+    Returns (handled: bool, reply: str | None)
+    """
+    text_lower = message_text.lower().strip()
+
+    # Simple completion phrases (marks most recent pending commitment)
+    simple_completions = ["done", "finished", "completed", "shipped", "did it", "got it done"]
+
+    # Check for simple completion
+    is_simple_completion = text_lower in simple_completions
+
+    # Check for completion with subject (e.g., "done with X", "finished X", "shipped the blog post")
+    completion_patterns = [
+        r"^(?:done|finished|completed|shipped)(?: with)?\s+(.+)$",
+        r"^i (?:finished|completed|shipped|did)\s+(?:the\s+)?(.+)$",
+        r"^(?:the\s+)?(.+)\s+is (?:done|finished|completed|shipped)$",
+    ]
+
+    subject = None
+    for pattern in completion_patterns:
+        match = re.match(pattern, text_lower)
+        if match:
+            subject = match.group(1).strip()
+            break
+
+    if not is_simple_completion and not subject:
+        return False, None
+
+    # Find the commitment to mark as complete
+    if subject:
+        # Try to find a commitment matching the subject
+        result = await db.execute(
+            select(Commitment).where(
+                and_(
+                    Commitment.status == CommitmentStatus.PENDING,
+                    Commitment.title.ilike(f"%{subject}%"),
+                )
+            ).order_by(Commitment.created_at.desc()).limit(1)
+        )
+        commitment = result.scalar_one_or_none()
+
+        if not commitment:
+            # No matching commitment found, try fuzzy match on most recent
+            result = await db.execute(
+                select(Commitment).where(
+                    Commitment.status == CommitmentStatus.PENDING
+                ).order_by(Commitment.created_at.desc()).limit(5)
+            )
+            pending = result.scalars().all()
+
+            # Simple word overlap check
+            subject_words = set(subject.lower().split())
+            for c in pending:
+                title_words = set(c.title.lower().split())
+                if subject_words & title_words:  # Any overlap
+                    commitment = c
+                    break
+
+        if not commitment:
+            return True, f"I don't see a commitment matching \"{subject}\". What exactly did you finish?"
+    else:
+        # Simple "done" - mark most recent pending commitment
+        result = await db.execute(
+            select(Commitment).where(
+                Commitment.status == CommitmentStatus.PENDING
+            ).order_by(Commitment.due_date.asc().nullslast(), Commitment.created_at.desc()).limit(1)
+        )
+        commitment = result.scalar_one_or_none()
+
+        if not commitment:
+            return True, "Done with what? I don't see any pending commitments."
+
+    # Mark as complete
+    commitment.status = CommitmentStatus.COMPLETED
+    commitment.completed_at = datetime.utcnow()
+    await db.flush()
+
+    # Generate a conversational acknowledgment
+    acknowledgments = [
+        f"Nice. \"{commitment.title}\" is checked off. What's next?",
+        f"Done. \"{commitment.title}\" is off the board. Keep the momentum going.",
+        f"Good - \"{commitment.title}\" is complete. One less thing hanging over you. What are you tackling next?",
+        f"\"{commitment.title}\" - shipped. That's the pattern we're building. What's the next priority?",
+    ]
+    import random
+    reply = random.choice(acknowledgments)
+
+    return True, reply
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
@@ -52,14 +150,19 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
         pending.status = "confirmed"
         await db.flush()
 
-        due_str = f" (due {due_date.strftime('%A, %b %d')})" if due_date else ""
-        return True, f"Locked in: {pending.parsed_title}{due_str}. No excuses."
+        if due_date:
+            due_str = due_date.strftime('%A, %b %d')
+            if due_date.hour != 0 or due_date.minute != 0:
+                due_str += due_date.strftime(' at %I:%M %p').replace(' 0', ' ').lstrip('0')
+            return True, f"Alright, \"{pending.parsed_title}\" is locked in for {due_str}. I'll be watching. Don't make me chase you."
+        else:
+            return True, f"Got it - \"{pending.parsed_title}\" is on the board. No deadline, but that doesn't mean you can let it rot. When are you shipping this?"
 
     # Check for rejection
     elif text_lower in ["no", "n", "wrong", "nope", "cancel", "nevermind", "never mind"]:
         pending.status = "rejected"
         await db.flush()
-        return True, "Fine, dropped it. What did you actually mean?"
+        return True, "Alright, scrapped. So what were you actually trying to say?"
 
     # Not a confirmation response
     return False, None
@@ -77,26 +180,46 @@ async def try_parse_commitment(db, message_text: str, context: dict) -> tuple[bo
         return False, None
 
     # Create pending parse for confirmation
-    due_date = None
+    # Parse date and time, defaulting to 12 PM if no time specified
+    due_datetime = None
     if parsed.get("due_date"):
         try:
-            due_date = datetime.strptime(parsed["due_date"], "%Y-%m-%d")
+            due_datetime = datetime.strptime(parsed["due_date"], "%Y-%m-%d")
+
+            # Handle time - default to 12:00 PM if not specified
+            if parsed.get("due_time"):
+                try:
+                    time_parts = parsed["due_time"].split(":")
+                    hour = int(time_parts[0])
+                    minute = int(time_parts[1]) if len(time_parts) > 1 else 0
+                    due_datetime = due_datetime.replace(hour=hour, minute=minute)
+                except (ValueError, IndexError):
+                    # If time parsing fails, default to 12 PM
+                    due_datetime = due_datetime.replace(hour=12, minute=0)
+            else:
+                # No time specified, default to 12 PM
+                due_datetime = due_datetime.replace(hour=12, minute=0)
         except ValueError:
             pass
 
     pending = PendingCommitmentParse(
         original_message=message_text,
         parsed_title=parsed["title"],
-        parsed_due_date=due_date,
+        parsed_due_date=due_datetime,
         parsed_description=parsed.get("description"),
         expires_at=datetime.utcnow() + timedelta(hours=1),
     )
     db.add(pending)
     await db.flush()
 
-    # Build confirmation message
-    due_str = f" by {due_date.strftime('%A, %b %d')}" if due_date else ""
-    confirmation = f'Got it: "{parsed["title"]}"{due_str}. Confirm? (yes/no)'
+    # Build conversational confirmation message
+    if due_datetime:
+        due_str = due_datetime.strftime('%A, %b %d')
+        time_str = due_datetime.strftime('%I:%M %p').lstrip('0').replace(' 0', ' ')
+        due_str += f" at {time_str}"
+        confirmation = f'So you\'re committing to "{parsed["title"]}" by {due_str}? Just say yes to lock it in, or no if I got it wrong.'
+    else:
+        confirmation = f'Sounds like you want to commit to "{parsed["title"]}" - no deadline mentioned though. Want me to add this? (yes/no)'
 
     return True, confirmation
 

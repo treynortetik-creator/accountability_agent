@@ -371,9 +371,88 @@ DASHBOARD_HTML = """
         .section { display: none; }
         .section.active { display: block; }
 
+        /* Mobile hamburger menu */
+        .mobile-header {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 0 16px;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 100;
+        }
+
+        .hamburger {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mobile-logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .mobile-logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent), #ff6b6b);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 199;
+        }
+
+        .sidebar-overlay.active { display: block; }
+
         @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .main-content { margin-left: 0; padding: 20px; }
+            .mobile-header { display: flex; }
+
+            .sidebar {
+                position: fixed;
+                left: -280px;
+                top: 0;
+                height: 100vh;
+                z-index: 200;
+                transition: left 0.3s ease;
+                width: 280px;
+            }
+
+            .sidebar.open { left: 0; }
+
+            .main-content {
+                margin-left: 0;
+                padding: 80px 16px 20px;
+            }
+
+            .page-title { font-size: 22px; }
+            .page-subtitle { font-size: 13px; }
         }
 
         .model-select {
@@ -424,8 +503,21 @@ DASHBOARD_HTML = """
         </div>
     </div>
 
+    <!-- Mobile header with hamburger menu -->
+    <header class="mobile-header" id="mobile-header" style="display: none;">
+        <button class="hamburger" onclick="toggleSidebar()">☰</button>
+        <div class="mobile-logo">
+            <div class="mobile-logo-icon">🔒</div>
+            <span>The Warden</span>
+        </div>
+        <div style="width: 40px;"></div>
+    </header>
+
+    <!-- Overlay for mobile sidebar -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
     <div class="app-container" id="app" style="display: none;">
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
             <div class="logo">
                 <div class="logo-icon">🔒</div>
                 <div class="logo-text">The <span>Warden</span></div>
@@ -703,6 +795,27 @@ DASHBOARD_HTML = """
         let API_KEY = localStorage.getItem('warden_api_key') || '';
         let currentCommitmentFilter = 'pending';
 
+        // Mobile sidebar functions
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('active');
+        }
+
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+        }
+
+        // Close sidebar when clicking a nav item on mobile
+        function showSectionMobile(section) {
+            closeSidebar();
+            showSection(section);
+        }
+
         if (API_KEY) { document.getElementById('apiKeyInput').value = API_KEY; authenticate(); }
 
         async function api(method, endpoint, data = null) {
@@ -732,6 +845,8 @@ DASHBOARD_HTML = """
             if (name === 'goals') loadGoals();
             if (name === 'calendar') loadCalendarEvents();
             if (name === 'settings') loadSettings();
+            // Close sidebar on mobile after navigation
+            closeSidebar();
         }
 
         async function authenticate() {
@@ -741,6 +856,7 @@ DASHBOARD_HTML = """
             if (stats) {
                 document.getElementById('auth-overlay').style.display = 'none';
                 document.getElementById('app').style.display = 'flex';
+                document.getElementById('mobile-header').style.display = '';
                 loadDashboard();
             }
         }

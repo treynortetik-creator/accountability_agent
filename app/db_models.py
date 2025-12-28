@@ -34,6 +34,7 @@ class CheckInType(enum.Enum):
     WEEKLY_PLANNING = "weekly_planning"
     ESCALATION = "escalation"
     DEADLINE_ALERT = "deadline_alert"
+    DEADLINE_REMINDER = "deadline_reminder"  # 90-min reminder
     MANUAL = "manual"
     COMMITMENT_CONFIRM = "commitment_confirm"
 
