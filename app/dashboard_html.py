@@ -695,6 +695,77 @@ DASHBOARD_HTML = """
                         </div>
                     </div>
                 </div>
+
+                <!-- Check-in Schedules Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">🕐 Check-in Schedules</h3>
+                        <button class="btn btn-sm btn-primary" onclick="showAddScheduleForm()">+ Add Schedule</button>
+                    </div>
+                    <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+                        Configure when The Warden checks in with you. Add multiple schedules for different times.
+                    </p>
+                    <div id="schedules-list"><div class="empty-state">Loading schedules...</div></div>
+                    <div id="add-schedule-form" style="display: none; margin-top: 16px; padding: 16px; background: var(--bg-tertiary); border-radius: 8px;">
+                        <h4 style="margin-bottom: 12px;">Add New Schedule</h4>
+                        <div class="grid-2" style="margin-bottom: 12px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label">Name</label>
+                                <input type="text" id="sched-name" class="form-input" placeholder="e.g., Morning Check-in" />
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label">Type</label>
+                                <select id="sched-type" class="form-input">
+                                    <option value="daily_checkin">Morning Check-in</option>
+                                    <option value="custom_reminder">Custom Reminder</option>
+                                    <option value="weekly_review">Weekly Review</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid-2" style="margin-bottom: 12px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label">Time</label>
+                                <input type="time" id="sched-time" class="form-input" value="09:00" />
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label">Days (leave blank for every day)</label>
+                                <input type="text" id="sched-days" class="form-input" placeholder="mon,tue,wed,thu,fri" />
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 12px;">
+                            <label class="form-label">Custom Prompt (optional - leave blank for default)</label>
+                            <textarea id="sched-prompt" class="form-textarea" style="min-height: 80px;" placeholder="Custom instructions for this check-in..."></textarea>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+                            <button class="btn btn-secondary" onclick="hideAddScheduleForm()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Check-in Prompts Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">📝 Check-in Prompts</h3>
+                    </div>
+                    <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+                        Customize the prompts used for different types of check-ins. These control what The Warden says.
+                    </p>
+                    <div id="prompts-list"><div class="empty-state">Loading prompts...</div></div>
+                    <div id="edit-prompt-form" style="display: none; margin-top: 16px; padding: 16px; background: var(--bg-tertiary); border-radius: 8px;">
+                        <h4 style="margin-bottom: 4px;">Edit Prompt: <span id="edit-prompt-type"></span></h4>
+                        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">This prompt tells the LLM how to generate check-in messages.</p>
+                        <div class="form-group" style="margin-bottom: 12px;">
+                            <textarea id="edit-prompt-content" class="form-textarea" style="min-height: 150px;"></textarea>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-primary" onclick="savePromptEdit()">Save Prompt</button>
+                            <button class="btn btn-secondary" onclick="resetPromptType()">Reset to Default</button>
+                            <button class="btn btn-secondary" onclick="hideEditPromptForm()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-header">
                         <h3 class="card-title">System Prompt</h3>
@@ -1374,6 +1445,185 @@ DASHBOARD_HTML = """
         async function triggerCheckin() { await api('POST', '/trigger/checkin'); showToast('Check-in triggered'); setTimeout(loadDashboard, 2000); }
         async function triggerWeeklyReview() { await api('POST', '/trigger/weekly-review'); showToast('Weekly review triggered'); }
         function addManualEvent() { const title = prompt('Event title:'); if (!title) return; const dateStr = prompt('Date (YYYY-MM-DD):'); if (!dateStr) return; api('POST', `/calendar/events/manual?title=${encodeURIComponent(title)}&start_time=${dateStr}T09:00:00`).then(() => { showToast('Event added'); loadCalendarEvents(); }); }
+
+        // ========== Check-in Schedules ==========
+        async function loadSchedules() {
+            const schedules = await api('GET', '/settings/schedules');
+            const container = document.getElementById('schedules-list');
+
+            if (!schedules || !schedules.length) {
+                container.innerHTML = '<div class="empty-state">No custom schedules configured. The default morning check-in at 4:15 AM is still active.</div>';
+                return;
+            }
+
+            container.innerHTML = schedules.map(s => {
+                const timeStr = `${String(s.hour).padStart(2, '0')}:${String(s.minute).padStart(2, '0')}`;
+                const daysStr = s.days_of_week || 'Every day';
+                const statusBadge = s.is_active
+                    ? '<span class="badge badge-completed">Active</span>'
+                    : '<span class="badge badge-pending">Paused</span>';
+                return `<div class="list-item">
+                    <div style="flex: 1;">
+                        <div class="list-item-title">${s.name} ${statusBadge}</div>
+                        <div class="list-item-meta">⏰ ${timeStr} • ${daysStr} • Type: ${s.check_in_type}</div>
+                        ${s.prompt_template ? '<div class="list-item-meta" style="font-style: italic; margin-top: 4px;">Custom prompt configured</div>' : ''}
+                    </div>
+                    <div class="list-item-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="toggleSchedule(${s.id}, ${!s.is_active})">${s.is_active ? 'Pause' : 'Enable'}</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteSchedule(${s.id})">🗑️</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function showAddScheduleForm() {
+            document.getElementById('add-schedule-form').style.display = 'block';
+        }
+
+        function hideAddScheduleForm() {
+            document.getElementById('add-schedule-form').style.display = 'none';
+            document.getElementById('sched-name').value = '';
+            document.getElementById('sched-time').value = '09:00';
+            document.getElementById('sched-days').value = '';
+            document.getElementById('sched-prompt').value = '';
+        }
+
+        async function saveSchedule() {
+            const name = document.getElementById('sched-name').value.trim();
+            const type = document.getElementById('sched-type').value;
+            const time = document.getElementById('sched-time').value;
+            const days = document.getElementById('sched-days').value.trim() || null;
+            const prompt = document.getElementById('sched-prompt').value.trim() || null;
+
+            if (!name) { showToast('Name is required', 'error'); return; }
+            if (!time) { showToast('Time is required', 'error'); return; }
+
+            const [hour, minute] = time.split(':').map(Number);
+
+            const result = await api('POST', '/settings/schedules', {
+                name: name,
+                check_in_type: type,
+                hour: hour,
+                minute: minute,
+                days_of_week: days,
+                prompt_template: prompt,
+                is_active: true
+            });
+
+            if (result) {
+                showToast('Schedule created');
+                hideAddScheduleForm();
+                loadSchedules();
+            }
+        }
+
+        async function toggleSchedule(id, active) {
+            const result = await api('PUT', `/settings/schedules/${id}`, { is_active: active });
+            if (result) {
+                showToast(active ? 'Schedule enabled' : 'Schedule paused');
+                loadSchedules();
+            }
+        }
+
+        async function deleteSchedule(id) {
+            if (!confirm('Delete this schedule?')) return;
+            const result = await api('DELETE', `/settings/schedules/${id}`);
+            if (result) {
+                showToast('Schedule deleted');
+                loadSchedules();
+            }
+        }
+
+        // ========== Check-in Prompts ==========
+        let currentEditingPromptType = null;
+
+        async function loadPrompts() {
+            const prompts = await api('GET', '/settings/prompts');
+            const container = document.getElementById('prompts-list');
+
+            if (!prompts || !prompts.length) {
+                container.innerHTML = '<div class="empty-state">No prompts found</div>';
+                return;
+            }
+
+            const typeLabels = {
+                'daily_checkin': 'Morning Check-in',
+                'weekly_review': 'Weekly Review',
+                'escalation': 'Escalation',
+                'deadline_alert': 'Deadline Alert',
+                'custom_reminder': 'Custom Reminder'
+            };
+
+            container.innerHTML = prompts.map(p => {
+                const label = typeLabels[p.prompt_type] || p.prompt_type;
+                const customBadge = p.is_custom
+                    ? '<span class="badge badge-completed" style="margin-left: 8px;">Custom</span>'
+                    : '<span class="badge badge-pending" style="margin-left: 8px;">Default</span>';
+                const preview = p.prompt_template.substring(0, 100) + (p.prompt_template.length > 100 ? '...' : '');
+                return `<div class="list-item">
+                    <div style="flex: 1;">
+                        <div class="list-item-title">${label} ${customBadge}</div>
+                        <div class="list-item-meta" style="font-family: 'JetBrains Mono', monospace; font-size: 11px;">${preview}</div>
+                    </div>
+                    <div class="list-item-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="editPrompt('${p.prompt_type}')">Edit</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function editPrompt(promptType) {
+            const result = await api('GET', `/settings/prompts/${promptType}`);
+            if (!result) return;
+
+            currentEditingPromptType = promptType;
+
+            const typeLabels = {
+                'daily_checkin': 'Morning Check-in',
+                'weekly_review': 'Weekly Review',
+                'escalation': 'Escalation',
+                'deadline_alert': 'Deadline Alert',
+                'custom_reminder': 'Custom Reminder'
+            };
+
+            document.getElementById('edit-prompt-type').textContent = typeLabels[promptType] || promptType;
+            document.getElementById('edit-prompt-content').value = result.prompt_template;
+            document.getElementById('edit-prompt-form').style.display = 'block';
+        }
+
+        function hideEditPromptForm() {
+            document.getElementById('edit-prompt-form').style.display = 'none';
+            currentEditingPromptType = null;
+        }
+
+        async function savePromptEdit() {
+            if (!currentEditingPromptType) return;
+
+            const content = document.getElementById('edit-prompt-content').value.trim();
+            if (!content) { showToast('Prompt cannot be empty', 'error'); return; }
+
+            const result = await api('PUT', `/settings/prompts/${currentEditingPromptType}`, {
+                prompt_template: content
+            });
+
+            if (result) {
+                showToast('Prompt saved');
+                hideEditPromptForm();
+                loadPrompts();
+            }
+        }
+
+        async function resetPromptType() {
+            if (!currentEditingPromptType) return;
+            if (!confirm('Reset this prompt to default?')) return;
+
+            const result = await api('POST', `/settings/prompts/${currentEditingPromptType}/reset`);
+            if (result) {
+                showToast('Prompt reset to default');
+                document.getElementById('edit-prompt-content').value = result.prompt_template;
+                loadPrompts();
+            }
+        }
 
         // Listen for auth code from popup window
         window.addEventListener('message', async function(event) {

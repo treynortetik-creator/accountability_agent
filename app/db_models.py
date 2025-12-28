@@ -212,3 +212,32 @@ class PendingCommitmentParse(Base):
     status = Column(String(20), default="pending")  # pending, confirmed, rejected
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)  # Auto-expire after some time
+
+
+class CheckInSchedule(Base):
+    """Custom check-in schedules configured by the user."""
+
+    __tablename__ = "checkin_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)  # e.g., "Morning Check-in", "Mid-day Reminder"
+    check_in_type = Column(String(50), nullable=False)  # daily_checkin, custom, reminder
+    hour = Column(Integer, nullable=False)  # 0-23
+    minute = Column(Integer, default=0)  # 0-59
+    days_of_week = Column(String(50), nullable=True)  # e.g., "mon,tue,wed,thu,fri" or null for every day
+    prompt_template = Column(Text, nullable=True)  # Custom prompt, null means use default
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CheckInPrompt(Base):
+    """Customizable prompts for different check-in types."""
+
+    __tablename__ = "checkin_prompts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    prompt_type = Column(String(50), unique=True, nullable=False)  # daily_checkin, weekly_review, escalation, etc.
+    prompt_template = Column(Text, nullable=False)
+    is_custom = Column(Boolean, default=False)  # True if user has customized it
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

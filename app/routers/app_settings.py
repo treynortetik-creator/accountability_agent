@@ -13,8 +13,8 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.database import get_db
 from app.auth import verify_api_key
-from app.db_models import Settings, ChatMessage
-from app.llm import WARDEN_SYSTEM_PROMPT
+from app.db_models import Settings, ChatMessage, CheckInSchedule, CheckInPrompt
+from app.llm import WARDEN_SYSTEM_PROMPT, DEFAULT_PROMPTS
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -426,3 +426,246 @@ async def delete_calendar_credentials(
         await db.flush()
 
     return {"status": "deleted", "message": "Calendar credentials removed"}
+
+
+# ============== Check-in Schedules ==============
+
+class ScheduleCreate(BaseModel):
+    name: str
+    check_in_type: str = "custom"
+    hour: int
+    minute: int = 0
+    days_of_week: Optional[str] = None  # e.g., "mon,tue,wed,thu,fri"
+    prompt_template: Optional[str] = None
+    is_active: bool = True
+
+
+class ScheduleUpdate(BaseModel):
+    name: Optional[str] = None
+    hour: Optional[int] = None
+    minute: Optional[int] = None
+    days_of_week: Optional[str] = None
+    prompt_template: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ScheduleResponse(BaseModel):
+    id: int
+    name: str
+    check_in_type: str
+    hour: int
+    minute: int
+    days_of_week: Optional[str]
+    prompt_template: Optional[str]
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/schedules", response_model=List[ScheduleResponse])
+async def list_schedules(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """List all check-in schedules."""
+    result = await db.execute(
+        select(CheckInSchedule).order_by(CheckInSchedule.hour, CheckInSchedule.minute)
+    )
+    return result.scalars().all()
+
+
+@router.post("/schedules", response_model=ScheduleResponse)
+async def create_schedule(
+    schedule: ScheduleCreate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Create a new check-in schedule."""
+    if schedule.hour < 0 or schedule.hour > 23:
+        raise HTTPException(status_code=400, detail="Hour must be 0-23")
+    if schedule.minute < 0 or schedule.minute > 59:
+        raise HTTPException(status_code=400, detail="Minute must be 0-59")
+
+    db_schedule = CheckInSchedule(
+        name=schedule.name,
+        check_in_type=schedule.check_in_type,
+        hour=schedule.hour,
+        minute=schedule.minute,
+        days_of_week=schedule.days_of_week,
+        prompt_template=schedule.prompt_template,
+        is_active=schedule.is_active,
+    )
+    db.add(db_schedule)
+    await db.flush()
+    await db.refresh(db_schedule)
+
+    # Reload scheduler with new schedules
+    from app.scheduler import reload_custom_schedules
+    await reload_custom_schedules()
+
+    return db_schedule
+
+
+@router.put("/schedules/{schedule_id}", response_model=ScheduleResponse)
+async def update_schedule(
+    schedule_id: int,
+    update: ScheduleUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update a check-in schedule."""
+    result = await db.execute(
+        select(CheckInSchedule).where(CheckInSchedule.id == schedule_id)
+    )
+    schedule = result.scalar_one_or_none()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    update_data = update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(schedule, field, value)
+
+    await db.flush()
+    await db.refresh(schedule)
+
+    # Reload scheduler
+    from app.scheduler import reload_custom_schedules
+    await reload_custom_schedules()
+
+    return schedule
+
+
+@router.delete("/schedules/{schedule_id}")
+async def delete_schedule(
+    schedule_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Delete a check-in schedule."""
+    result = await db.execute(
+        select(CheckInSchedule).where(CheckInSchedule.id == schedule_id)
+    )
+    schedule = result.scalar_one_or_none()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    await db.delete(schedule)
+    await db.flush()
+
+    # Reload scheduler
+    from app.scheduler import reload_custom_schedules
+    await reload_custom_schedules()
+
+    return {"status": "deleted"}
+
+
+# ============== Check-in Prompts ==============
+
+class PromptResponse(BaseModel):
+    prompt_type: str
+    prompt_template: str
+    is_custom: bool
+    is_default_available: bool
+
+
+class PromptUpdate(BaseModel):
+    prompt_template: str
+
+
+@router.get("/prompts")
+async def list_prompts(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """List all check-in prompts (custom and defaults)."""
+    result = await db.execute(select(CheckInPrompt))
+    custom_prompts = {p.prompt_type: p for p in result.scalars().all()}
+
+    # Combine with defaults
+    prompts = []
+    for prompt_type, default_template in DEFAULT_PROMPTS.items():
+        custom = custom_prompts.get(prompt_type)
+        prompts.append({
+            "prompt_type": prompt_type,
+            "prompt_template": custom.prompt_template if custom else default_template,
+            "is_custom": bool(custom),
+            "is_default_available": True,
+        })
+
+    return prompts
+
+
+@router.get("/prompts/{prompt_type}")
+async def get_prompt(
+    prompt_type: str,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get a specific prompt."""
+    result = await db.execute(
+        select(CheckInPrompt).where(CheckInPrompt.prompt_type == prompt_type)
+    )
+    custom = result.scalar_one_or_none()
+
+    default = DEFAULT_PROMPTS.get(prompt_type)
+    if not custom and not default:
+        raise HTTPException(status_code=404, detail="Prompt type not found")
+
+    return {
+        "prompt_type": prompt_type,
+        "prompt_template": custom.prompt_template if custom else default,
+        "is_custom": bool(custom),
+        "default_template": default,
+    }
+
+
+@router.put("/prompts/{prompt_type}")
+async def update_prompt_template(
+    prompt_type: str,
+    update: PromptUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update or create a custom prompt."""
+    if prompt_type not in DEFAULT_PROMPTS:
+        raise HTTPException(status_code=400, detail=f"Invalid prompt type. Must be one of: {list(DEFAULT_PROMPTS.keys())}")
+
+    result = await db.execute(
+        select(CheckInPrompt).where(CheckInPrompt.prompt_type == prompt_type)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.prompt_template = update.prompt_template
+        existing.is_custom = True
+    else:
+        new_prompt = CheckInPrompt(
+            prompt_type=prompt_type,
+            prompt_template=update.prompt_template,
+            is_custom=True,
+        )
+        db.add(new_prompt)
+
+    await db.flush()
+    return {"status": "updated", "prompt_type": prompt_type}
+
+
+@router.post("/prompts/{prompt_type}/reset")
+async def reset_prompt_template(
+    prompt_type: str,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Reset a prompt to its default."""
+    result = await db.execute(
+        select(CheckInPrompt).where(CheckInPrompt.prompt_type == prompt_type)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        await db.delete(existing)
+        await db.flush()
+
+    default = DEFAULT_PROMPTS.get(prompt_type, "")
+    return {"status": "reset", "prompt_template": default}

@@ -19,6 +19,7 @@ from app.db_models import (
     CheckInType,
     Pattern,
     ChatMessage,
+    CheckInSchedule,
 )
 from app.telegram_bot import telegram_service
 from app.llm import generate_message

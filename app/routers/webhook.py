@@ -221,7 +221,7 @@ async def try_parse_commitment(db, message_text: str, context: dict) -> tuple[bo
     else:
         confirmation = f'Sounds like you want to commit to "{parsed["title"]}" - no deadline mentioned though. Want me to add this? (yes/no)'
 
-    return True, confirmation
+    return True, " ".join(confirmation_parts)
 
 
 @router.post("/telegram")

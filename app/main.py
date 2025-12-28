@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from app.config import get_settings
 from app.database import init_db
 from app.auth import verify_api_key
-from app.scheduler import setup_scheduler, shutdown_scheduler, daily_checkin_job
+from app.scheduler import setup_scheduler, shutdown_scheduler, daily_checkin_job, load_custom_schedules_on_startup
 from app.routers import goals, commitments, checkins, webhook, app_settings, calendar
 from app.models import ManualCheckInRequest
 from app.dashboard_html import DASHBOARD_HTML
@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
     logger.info("Persistent settings initialized")
 
     setup_scheduler()
+    await load_custom_schedules_on_startup()
     logger.info("The Warden is now watching.")
     yield
     # Shutdown
