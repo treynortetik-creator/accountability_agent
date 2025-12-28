@@ -642,6 +642,43 @@ DASHBOARD_HTML = """
 
                 <div class="card" style="margin-top: 20px;">
                     <div class="card-header">
+                        <h3 class="card-title">Check-in Schedule</h3>
+                    </div>
+                    <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
+                        Configure when The Warden checks in with you.
+                    </p>
+                    <div class="form-group">
+                        <label>Daily Check-in Time</label>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="number" id="daily-hour" min="0" max="23" style="width: 70px;" placeholder="Hour">
+                            <span>:</span>
+                            <input type="number" id="daily-minute" min="0" max="59" style="width: 70px;" placeholder="Min">
+                            <span style="color: var(--text-muted); font-size: 12px;">(24h format, your timezone)</span>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: 12px;">
+                        <label>Weekly Review</label>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <select id="weekly-day" style="width: 120px;">
+                                <option value="sun">Sunday</option>
+                                <option value="mon">Monday</option>
+                                <option value="tue">Tuesday</option>
+                                <option value="wed">Wednesday</option>
+                                <option value="thu">Thursday</option>
+                                <option value="fri">Friday</option>
+                                <option value="sat">Saturday</option>
+                            </select>
+                            <span>at</span>
+                            <input type="number" id="weekly-hour" min="0" max="23" style="width: 70px;" placeholder="Hour">
+                            <span>:</span>
+                            <input type="number" id="weekly-minute" min="0" max="59" style="width: 70px;" placeholder="Min">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" style="margin-top: 16px;" onclick="saveSchedule()">Save Schedule</button>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-header">
                         <h3 class="card-title">Telegram Webhook</h3>
                         <span id="webhook-status" class="badge badge-pending">Unknown</span>
                     </div>
@@ -881,6 +918,8 @@ DASHBOARD_HTML = """
         async function loadSettings() {
             const models = await api('GET', '/settings/models');
             const settings = await api('GET', '/settings');
+            const schedule = await api('GET', '/checkins/schedule');
+
             if (models && settings) {
                 allModels = models;
                 currentModel = settings.openrouter_model;
@@ -904,6 +943,32 @@ DASHBOARD_HTML = """
                         document.getElementById('gcal-client-secret').value = settings.gcal_client_secret;
                     }
                 }
+            }
+
+            // Load schedule settings
+            if (schedule) {
+                document.getElementById('daily-hour').value = schedule.daily_checkin_hour;
+                document.getElementById('daily-minute').value = schedule.daily_checkin_minute;
+                document.getElementById('weekly-day').value = schedule.weekly_review_day;
+                document.getElementById('weekly-hour').value = schedule.weekly_review_hour;
+                document.getElementById('weekly-minute').value = schedule.weekly_review_minute;
+            }
+        }
+
+        async function saveSchedule() {
+            const scheduleData = {
+                daily_checkin_hour: parseInt(document.getElementById('daily-hour').value) || 4,
+                daily_checkin_minute: parseInt(document.getElementById('daily-minute').value) || 15,
+                weekly_review_day: document.getElementById('weekly-day').value || 'sun',
+                weekly_review_hour: parseInt(document.getElementById('weekly-hour').value) || 18,
+                weekly_review_minute: parseInt(document.getElementById('weekly-minute').value) || 0,
+            };
+
+            const result = await api('PUT', '/checkins/schedule', scheduleData);
+            if (result) {
+                showToast('Schedule saved! Check-in times updated.');
+            } else {
+                showToast('Failed to save schedule', 'error');
             }
         }
 

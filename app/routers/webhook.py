@@ -206,8 +206,20 @@ async def telegram_webhook(request: Request):
                 days_since_shipped = "never"
             context["days_since_shipped"] = days_since_shipped
 
-            # Analyze the response using LLM
-            analysis = await analyze_response(message_text, context)
+            # Fetch recent chat history for context
+            chat_history_result = await db.execute(
+                select(ChatMessage)
+                .order_by(ChatMessage.created_at.desc())
+                .limit(20)
+            )
+            chat_messages = list(reversed(chat_history_result.scalars().all()))
+            chat_history = [
+                {"role": msg.role, "content": msg.content}
+                for msg in chat_messages
+            ]
+
+            # Analyze the response using LLM (with chat history)
+            analysis = await analyze_response(message_text, context, chat_history)
 
             # Create response record
             response = Response(

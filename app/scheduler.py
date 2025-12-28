@@ -507,3 +507,49 @@ def shutdown_scheduler():
     if scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("Scheduler shutdown")
+
+
+async def reschedule_jobs(config: dict):
+    """Reschedule jobs with new configuration.
+
+    Args:
+        config: Dict with schedule configuration keys:
+            - daily_checkin_hour
+            - daily_checkin_minute
+            - weekly_review_day
+            - weekly_review_hour
+            - weekly_review_minute
+    """
+    tz = pytz.timezone(settings.timezone)
+    day_map = {"sun": 6, "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5}
+
+    # Reschedule daily check-in
+    daily_hour = config.get("daily_checkin_hour", settings.daily_checkin_hour)
+    daily_minute = config.get("daily_checkin_minute", settings.daily_checkin_minute)
+
+    scheduler.reschedule_job(
+        "daily_checkin",
+        trigger=CronTrigger(
+            hour=daily_hour,
+            minute=daily_minute,
+            timezone=tz,
+        ),
+    )
+    logger.info(f"Rescheduled daily check-in to {daily_hour}:{daily_minute:02d}")
+
+    # Reschedule weekly review
+    weekly_day = config.get("weekly_review_day", settings.weekly_review_day)
+    weekly_hour = config.get("weekly_review_hour", settings.weekly_review_hour)
+    weekly_minute = config.get("weekly_review_minute", settings.weekly_review_minute)
+    day_of_week = day_map.get(weekly_day.lower(), 6)
+
+    scheduler.reschedule_job(
+        "weekly_review",
+        trigger=CronTrigger(
+            day_of_week=day_of_week,
+            hour=weekly_hour,
+            minute=weekly_minute,
+            timezone=tz,
+        ),
+    )
+    logger.info(f"Rescheduled weekly review to {weekly_day} at {weekly_hour}:{weekly_minute:02d}")

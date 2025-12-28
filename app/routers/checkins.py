@@ -145,9 +145,30 @@ async def get_stats(
 
 @router.get("/schedule", response_model=ScheduleConfigResponse)
 async def get_schedule(
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
     """Get current schedule configuration."""
+    from app.db_models import Settings as SettingsModel
+    import json
+
+    # Try to get from database first
+    result = await db.execute(
+        select(SettingsModel).where(SettingsModel.key == "schedule_config")
+    )
+    schedule_setting = result.scalar_one_or_none()
+
+    if schedule_setting:
+        config = json.loads(schedule_setting.value)
+        return ScheduleConfigResponse(
+            daily_checkin_hour=config.get("daily_checkin_hour", settings.daily_checkin_hour),
+            daily_checkin_minute=config.get("daily_checkin_minute", settings.daily_checkin_minute),
+            weekly_review_day=config.get("weekly_review_day", settings.weekly_review_day),
+            weekly_review_hour=config.get("weekly_review_hour", settings.weekly_review_hour),
+            weekly_review_minute=config.get("weekly_review_minute", settings.weekly_review_minute),
+        )
+
+    # Fall back to env vars
     return ScheduleConfigResponse(
         daily_checkin_hour=settings.daily_checkin_hour,
         daily_checkin_minute=settings.daily_checkin_minute,
@@ -155,3 +176,52 @@ async def get_schedule(
         weekly_review_hour=settings.weekly_review_hour,
         weekly_review_minute=settings.weekly_review_minute,
     )
+
+
+@router.put("/schedule", response_model=ScheduleConfigResponse)
+async def update_schedule(
+    schedule_update: ScheduleConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update schedule configuration and restart scheduler jobs."""
+    from app.db_models import Settings as SettingsModel
+    from app.scheduler import reschedule_jobs
+    import json
+
+    # Get current config
+    result = await db.execute(
+        select(SettingsModel).where(SettingsModel.key == "schedule_config")
+    )
+    schedule_setting = result.scalar_one_or_none()
+
+    if schedule_setting:
+        current_config = json.loads(schedule_setting.value)
+    else:
+        current_config = {
+            "daily_checkin_hour": settings.daily_checkin_hour,
+            "daily_checkin_minute": settings.daily_checkin_minute,
+            "weekly_review_day": settings.weekly_review_day,
+            "weekly_review_hour": settings.weekly_review_hour,
+            "weekly_review_minute": settings.weekly_review_minute,
+        }
+
+    # Update with provided values
+    update_data = schedule_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        if value is not None:
+            current_config[key] = value
+
+    # Save to database
+    if schedule_setting:
+        schedule_setting.value = json.dumps(current_config)
+    else:
+        new_setting = SettingsModel(key="schedule_config", value=json.dumps(current_config))
+        db.add(new_setting)
+
+    await db.flush()
+
+    # Reschedule jobs with new times
+    await reschedule_jobs(current_config)
+
+    return ScheduleConfigResponse(**current_config)
