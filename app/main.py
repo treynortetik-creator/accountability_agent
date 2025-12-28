@@ -30,6 +30,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting The Warden...")
     await init_db()
     logger.info("Database initialized")
+
+    # Initialize persistent settings
+    from app.database import async_session_maker
+    from app.init_settings import initialize_all
+    async with async_session_maker() as db:
+        await initialize_all(db)
+        await db.commit()
+    logger.info("Persistent settings initialized")
+
     setup_scheduler()
     logger.info("The Warden is now watching.")
     yield

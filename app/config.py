@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     silence_threshold_hours: int = 18
     deadline_alert_hours: int = 48
 
+    # Google Calendar (optional - for persistent config)
+    gcal_client_id: str = ""
+    gcal_client_secret: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
