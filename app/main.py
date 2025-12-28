@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.database import init_db
 from app.auth import verify_api_key
 from app.scheduler import setup_scheduler, shutdown_scheduler, daily_checkin_job
-from app.routers import goals, commitments, checkins, webhook, settings, calendar
+from app.routers import goals, commitments, checkins, webhook, app_settings, calendar
 from app.models import ManualCheckInRequest
 from app.dashboard_html import DASHBOARD_HTML
 
@@ -58,7 +58,7 @@ app.add_middleware(
 app.include_router(goals.router, prefix="/api")
 app.include_router(commitments.router, prefix="/api")
 app.include_router(checkins.router, prefix="/api")
-app.include_router(settings.router, prefix="/api")
+app.include_router(app_settings.router, prefix="/api")
 app.include_router(calendar.router, prefix="/api")
 app.include_router(webhook.router)
 
