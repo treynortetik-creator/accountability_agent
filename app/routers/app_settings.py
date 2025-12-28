@@ -1,5 +1,6 @@
 """Settings API router."""
 
+import json
 import logging
 import httpx
 
@@ -152,8 +153,6 @@ async def get_settings(
     _: str = Depends(verify_api_key),
 ):
     """Get current settings."""
-    import json
-
     model = await get_setting(db, "openrouter_model", "google/gemini-flash-1.5")
     prompt = await get_setting(db, "system_prompt", WARDEN_SYSTEM_PROMPT)
     calendar_json = await get_setting(db, "google_calendar_token", "")

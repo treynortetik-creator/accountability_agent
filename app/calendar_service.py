@@ -1,5 +1,6 @@
 """Google Calendar integration for The Warden."""
 
+import asyncio
 import logging
 import json
 from datetime import datetime, timedelta
@@ -66,7 +67,8 @@ class CalendarService:
 
             # Refresh if expired
             if creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                # Wrap blocking refresh call in thread to avoid blocking event loop
+                await asyncio.to_thread(creds.refresh, Request())
                 # Save refreshed token
                 await self._save_credentials(db, creds, token_data.get('client_id'), token_data.get('client_secret'))
 
@@ -133,11 +135,15 @@ class CalendarService:
 
             events = events_result.get('items', [])
 
-            # Clear old events and insert new ones
-            await db.execute(delete(CalendarEvent))
-
+            # Track Google event IDs from this sync
+            google_event_ids = set()
             synced_count = 0
+
+            # Upsert logic: update existing events or insert new ones
             for event in events:
+                google_event_id = event['id']
+                google_event_ids.add(google_event_id)
+
                 start = event.get('start', {})
                 end = event.get('end', {})
 
@@ -160,18 +166,48 @@ class CalendarService:
                 if event.get('eventType') == 'outOfOffice':
                     is_ooo = True
 
-                cal_event = CalendarEvent(
-                    google_event_id=event['id'],
-                    title=event.get('summary', 'No Title'),
-                    description=event.get('description'),
-                    start_time=start_time,
-                    end_time=end_time,
-                    all_day=all_day,
-                    location=event.get('location'),
-                    is_ooo=is_ooo,
+                # Check if event already exists
+                result = await db.execute(
+                    select(CalendarEvent).where(CalendarEvent.google_event_id == google_event_id)
                 )
-                db.add(cal_event)
+                existing_event = result.scalar_one_or_none()
+
+                if existing_event:
+                    # Update existing event
+                    existing_event.title = event.get('summary', 'No Title')
+                    existing_event.description = event.get('description')
+                    existing_event.start_time = start_time
+                    existing_event.end_time = end_time
+                    existing_event.all_day = all_day
+                    existing_event.location = event.get('location')
+                    existing_event.is_ooo = is_ooo
+                else:
+                    # Insert new event
+                    cal_event = CalendarEvent(
+                        google_event_id=google_event_id,
+                        title=event.get('summary', 'No Title'),
+                        description=event.get('description'),
+                        start_time=start_time,
+                        end_time=end_time,
+                        all_day=all_day,
+                        location=event.get('location'),
+                        is_ooo=is_ooo,
+                    )
+                    db.add(cal_event)
+
                 synced_count += 1
+
+            # Delete events that were removed from Google Calendar
+            # (events not in the current sync response)
+            if google_event_ids:
+                await db.execute(
+                    delete(CalendarEvent).where(
+                        CalendarEvent.google_event_id.not_in(google_event_ids)
+                    )
+                )
+            else:
+                # If no events from Google, delete all
+                await db.execute(delete(CalendarEvent))
 
             await db.flush()
             logger.info(f"Synced {synced_count} calendar events")

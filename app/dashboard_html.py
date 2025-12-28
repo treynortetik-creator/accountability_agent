@@ -689,6 +689,7 @@ DASHBOARD_HTML = """
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
             document.getElementById('section-' + name).classList.add('active');
             event.target.closest('.nav-item').classList.add('active');
+            if (name === 'dashboard') loadPatterns();
             if (name === 'chat') loadChatHistory();
             if (name === 'commitments') loadCommitments();
             if (name === 'goals') loadGoals();
@@ -727,14 +728,38 @@ DASHBOARD_HTML = """
                 document.getElementById('streak-completion-best').textContent = compStreak.best > 0 ? `Best: ${compStreak.best} weeks` : '';
             }
 
-            document.getElementById('patterns-list').innerHTML = stats.active_patterns.length
-                ? stats.active_patterns.map(p => `<div class="pattern-item ${p.severity >= 4 ? '' : p.severity >= 2 ? 'medium' : 'low'}"><div class="pattern-type">${p.pattern_type}</div><div class="pattern-desc">${p.description}</div></div>`).join('')
-                : '<div class="empty-state">No patterns detected</div>';
+            // Load patterns separately
+            loadPatterns();
 
             const checkins = await api('GET', '/checkins?limit=5');
             document.getElementById('recent-activity').innerHTML = checkins && checkins.length
                 ? checkins.map(c => `<div class="list-item"><div><div class="list-item-title">${c.response_received ? '✅' : '⏳'} ${c.check_in_type.replace('_', ' ')}</div><div class="list-item-meta">${new Date(c.sent_at).toLocaleString()}</div></div></div>`).join('')
                 : '<div class="empty-state">No check-ins yet</div>';
+        }
+
+        async function loadPatterns() {
+            const patterns = await api('GET', '/checkins/patterns');
+            const container = document.getElementById('patterns-list');
+
+            if (!patterns || !patterns.length) {
+                container.innerHTML = '<div class="empty-state">No patterns detected</div>';
+                return;
+            }
+
+            // Map severity to emoji and CSS class
+            const getSeverityIndicator = (severity) => {
+                if (severity >= 4) return { emoji: '🔴', class: '' };
+                if (severity >= 2) return { emoji: '🟡', class: 'medium' };
+                return { emoji: '🟢', class: 'low' };
+            };
+
+            container.innerHTML = patterns.map(p => {
+                const indicator = getSeverityIndicator(p.severity);
+                return `<div class="pattern-item ${indicator.class}">
+                    <div class="pattern-type">${indicator.emoji} ${p.pattern_type.replace('_', ' ').toUpperCase()}</div>
+                    <div class="pattern-desc">${p.description}</div>
+                </div>`;
+            }).join('');
         }
 
         async function loadChatHistory() {
