@@ -215,12 +215,13 @@ async def get_chat_history(
     _: str = Depends(verify_api_key),
 ):
     """Get chat message history."""
+    # Get most recent messages, then reverse for chronological order
     result = await db.execute(
         select(ChatMessage)
         .order_by(ChatMessage.created_at.desc())
         .limit(limit)
     )
-    messages = result.scalars().all()
+    messages = list(reversed(result.scalars().all()))  # Reverse for oldest-first display
     return [
         ChatMessageResponse(
             id=m.id,
@@ -229,7 +230,7 @@ async def get_chat_history(
             message_type=m.message_type,
             created_at=m.created_at.isoformat(),
         )
-        for m in reversed(messages)  # Return in chronological order
+        for m in messages
     ]
 
 

@@ -481,8 +481,13 @@ DASHBOARD_HTML = """
 
             <section id="section-chat" class="section">
                 <div class="page-header">
-                    <h1 class="page-title">Chat History</h1>
-                    <p class="page-subtitle">Your conversation with The Warden</p>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h1 class="page-title">Chat History</h1>
+                            <p class="page-subtitle">Your conversation with The Warden</p>
+                        </div>
+                        <button class="btn btn-secondary" onclick="loadChatHistory()">Refresh</button>
+                    </div>
                 </div>
                 <div class="chat-container">
                     <div class="chat-messages" id="chat-messages"><div class="empty-state">Loading...</div></div>
@@ -632,6 +637,23 @@ DASHBOARD_HTML = """
                         3. Go to Credentials → Create OAuth 2.0 Client ID (Web application)<br>
                         4. Add <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 4px;">${window.location.origin}/api/calendar/callback</code> as an authorized redirect URI<br>
                         5. Copy Client ID and Secret here, then click "Connect Calendar"
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-header">
+                        <h3 class="card-title">Telegram Webhook</h3>
+                        <span id="webhook-status" class="badge badge-pending">Unknown</span>
+                    </div>
+                    <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
+                        The webhook allows The Warden to receive your Telegram replies.
+                    </p>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <button class="btn btn-primary" onclick="setupWebhook()">Setup Webhook</button>
+                        <button class="btn btn-secondary" onclick="checkWebhookStatus()">Check Status</button>
+                    </div>
+                    <div id="webhook-info" style="margin-top: 12px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px; display: none;">
+                        <div id="webhook-details"></div>
                     </div>
                 </div>
             </section>
@@ -913,6 +935,65 @@ DASHBOARD_HTML = """
                 showToast('Calendar disconnected');
                 document.getElementById('auth-code-section').style.display = 'none';
                 loadSettings();
+            }
+        }
+
+        async function setupWebhook() {
+            const statusBadge = document.getElementById('webhook-status');
+            statusBadge.textContent = 'Setting up...';
+            statusBadge.className = 'badge badge-pending';
+
+            try {
+                const res = await fetch('/webhook/setup', { method: 'POST' });
+                const result = await res.json();
+
+                if (result.status === 'success') {
+                    showToast('Webhook configured successfully!');
+                    statusBadge.textContent = 'Active';
+                    statusBadge.className = 'badge badge-completed';
+                    document.getElementById('webhook-info').style.display = 'block';
+                    document.getElementById('webhook-details').innerHTML = `<strong>URL:</strong> ${result.webhook_url}`;
+                } else {
+                    showToast('Failed to setup webhook: ' + result.error, 'error');
+                    statusBadge.textContent = 'Error';
+                    statusBadge.className = 'badge badge-overdue';
+                }
+            } catch (e) {
+                showToast('Failed to setup webhook', 'error');
+                statusBadge.textContent = 'Error';
+                statusBadge.className = 'badge badge-overdue';
+            }
+        }
+
+        async function checkWebhookStatus() {
+            const statusBadge = document.getElementById('webhook-status');
+            statusBadge.textContent = 'Checking...';
+
+            try {
+                const res = await fetch('/webhook/status');
+                const result = await res.json();
+
+                if (result.ok && result.result) {
+                    const info = result.result;
+                    const hasUrl = info.url && info.url.length > 0;
+                    statusBadge.textContent = hasUrl ? 'Active' : 'Not Set';
+                    statusBadge.className = hasUrl ? 'badge badge-completed' : 'badge badge-pending';
+
+                    document.getElementById('webhook-info').style.display = 'block';
+                    let details = `<strong>URL:</strong> ${info.url || 'None'}<br>`;
+                    details += `<strong>Pending updates:</strong> ${info.pending_update_count || 0}<br>`;
+                    if (info.last_error_message) {
+                        details += `<strong style="color: var(--danger);">Last error:</strong> ${info.last_error_message}`;
+                    }
+                    document.getElementById('webhook-details').innerHTML = details;
+                } else {
+                    statusBadge.textContent = 'Error';
+                    statusBadge.className = 'badge badge-overdue';
+                }
+            } catch (e) {
+                showToast('Failed to check webhook status', 'error');
+                statusBadge.textContent = 'Error';
+                statusBadge.className = 'badge badge-overdue';
             }
         }
 

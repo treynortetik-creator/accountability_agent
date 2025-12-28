@@ -245,3 +245,52 @@ async def telegram_webhook(request: Request):
 async def webhook_health():
     """Health check for webhook endpoint."""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+
+@router.post("/setup")
+async def setup_webhook(request: Request):
+    """Register webhook URL with Telegram."""
+    import httpx
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        raise HTTPException(status_code=400, detail="Telegram bot token not configured")
+
+    # Build webhook URL from request
+    base_url = str(request.base_url)
+    if base_url.startswith("http://") and "localhost" not in base_url and "127.0.0.1" not in base_url:
+        base_url = base_url.replace("http://", "https://", 1)
+    webhook_url = f"{base_url}webhook/telegram"
+
+    # Call Telegram API to set webhook
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"https://api.telegram.org/bot{settings.telegram_bot_token}/setWebhook",
+            json={"url": webhook_url}
+        )
+        result = response.json()
+
+    if result.get("ok"):
+        return {"status": "success", "webhook_url": webhook_url, "telegram_response": result}
+    else:
+        return {"status": "error", "error": result.get("description"), "webhook_url": webhook_url}
+
+
+@router.get("/status")
+async def webhook_status():
+    """Check current webhook status with Telegram."""
+    import httpx
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        raise HTTPException(status_code=400, detail="Telegram bot token not configured")
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.telegram.org/bot{settings.telegram_bot_token}/getWebhookInfo"
+        )
+        result = response.json()
+
+    return result
