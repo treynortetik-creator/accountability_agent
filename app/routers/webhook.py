@@ -116,16 +116,17 @@ async def telegram_webhook(request: Request):
         # Not a valid message for us, return OK anyway
         return {"ok": True}
 
-    logger.info(f"Received message: {parsed['text'][:50]}...")
+    message_text = parsed["text"]
+    logger.info(f"Received message: {message_text[:50]}...")
 
+    # STEP 1: Save user message IMMEDIATELY (separate transaction)
+    # This ensures user messages are ALWAYS saved, even if processing fails
     async with async_session_maker() as db:
         try:
-            message_text = parsed["text"]
-
             # Update response streak
             await update_response_streak(db)
 
-            # Save user message to chat history first
+            # Save user message to chat history
             user_chat_msg = ChatMessage(
                 role="user",
                 content=message_text,
@@ -133,7 +134,15 @@ async def telegram_webhook(request: Request):
                 telegram_message_id=parsed["message_id"],
             )
             db.add(user_chat_msg)
+            await db.commit()
+            logger.info(f"Saved user message to chat history: {parsed['message_id']}")
+        except Exception as e:
+            logger.error(f"Failed to save user message: {e}")
+            # Continue processing anyway - we want to try to respond
 
+    # STEP 2: Process the message and generate response (separate transaction)
+    async with async_session_maker() as db:
+        try:
             # Check if this is a confirmation response to a pending commitment
             handled, reply = await handle_pending_confirmation(db, message_text)
             if handled:
@@ -147,6 +156,7 @@ async def telegram_webhook(request: Request):
                     )
                     db.add(warden_chat_msg)
                 await db.commit()
+                logger.info("Handled pending confirmation")
                 return {"ok": True}
 
             # Build context for analysis
@@ -165,6 +175,7 @@ async def telegram_webhook(request: Request):
                     )
                     db.add(warden_chat_msg)
                 await db.commit()
+                logger.info("Parsed and handled commitment")
                 return {"ok": True}
 
             # Find the most recent unanswered check-in
@@ -216,18 +227,22 @@ async def telegram_webhook(request: Request):
                 checkin.response_received = True
                 checkin.responded_at = datetime.utcnow()
 
-            # Send reply if the LLM generated one
+            # Send reply - use fallback if LLM didn't generate one
             reply = analysis.get("reply")
-            if reply:
-                msg_id = await telegram_service.send_message(reply)
-                # Save warden reply to chat history
-                warden_chat_msg = ChatMessage(
-                    role="warden",
-                    content=reply,
-                    message_type="reply",
-                    telegram_message_id=msg_id,
-                )
-                db.add(warden_chat_msg)
+            if not reply:
+                # Fallback reply when LLM fails or returns no reply
+                reply = "Got it. What's next on the list?"
+                logger.warning("LLM returned no reply, using fallback")
+
+            msg_id = await telegram_service.send_message(reply)
+            # Save warden reply to chat history
+            warden_chat_msg = ChatMessage(
+                role="warden",
+                content=reply,
+                message_type="reply",
+                telegram_message_id=msg_id,
+            )
+            db.add(warden_chat_msg)
 
             await db.commit()
 
@@ -235,9 +250,27 @@ async def telegram_webhook(request: Request):
             return {"ok": True}
 
         except Exception as e:
-            logger.error(f"Failed to process webhook: {e}")
+            logger.error(f"Failed to process webhook: {e}", exc_info=True)
             await db.rollback()
-            # Return OK anyway so Telegram doesn't retry
+
+            # Try to send an error acknowledgment to the user
+            try:
+                error_reply = "Message received. Had a hiccup processing it, but I've got it logged."
+                msg_id = await telegram_service.send_message(error_reply)
+                # Save the error reply in a new transaction
+                async with async_session_maker() as error_db:
+                    error_chat_msg = ChatMessage(
+                        role="warden",
+                        content=error_reply,
+                        message_type="error",
+                        telegram_message_id=msg_id,
+                    )
+                    error_db.add(error_chat_msg)
+                    await error_db.commit()
+            except Exception as send_error:
+                logger.error(f"Failed to send error reply: {send_error}")
+
+            # Return OK so Telegram doesn't retry
             return {"ok": True, "error": str(e)}
 
 
