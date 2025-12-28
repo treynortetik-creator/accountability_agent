@@ -106,6 +106,8 @@ class SettingsResponse(BaseModel):
     openrouter_model: str
     system_prompt: str
     google_calendar_connected: bool
+    gcal_client_id: Optional[str] = None
+    gcal_client_secret: Optional[str] = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -150,14 +152,33 @@ async def get_settings(
     _: str = Depends(verify_api_key),
 ):
     """Get current settings."""
+    import json
+
     model = await get_setting(db, "openrouter_model", "google/gemini-flash-1.5")
     prompt = await get_setting(db, "system_prompt", WARDEN_SYSTEM_PROMPT)
-    calendar = await get_setting(db, "google_calendar_token", "")
+    calendar_json = await get_setting(db, "google_calendar_token", "")
+
+    # Parse calendar credentials
+    gcal_client_id = None
+    gcal_client_secret = None
+    calendar_connected = False
+
+    if calendar_json:
+        try:
+            cal_data = json.loads(calendar_json)
+            gcal_client_id = cal_data.get("client_id")
+            gcal_client_secret = cal_data.get("client_secret")
+            # Connected if we have tokens (not just credentials)
+            calendar_connected = bool(cal_data.get("token") and cal_data.get("refresh_token"))
+        except json.JSONDecodeError:
+            pass
 
     return SettingsResponse(
         openrouter_model=model,
         system_prompt=prompt,
-        google_calendar_connected=bool(calendar),
+        google_calendar_connected=calendar_connected,
+        gcal_client_id=gcal_client_id,
+        gcal_client_secret=gcal_client_secret,
     )
 
 

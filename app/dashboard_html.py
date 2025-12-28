@@ -871,6 +871,13 @@ DASHBOARD_HTML = """
                 } else {
                     calStatus.textContent = 'Not Connected';
                     calStatus.className = 'badge badge-pending';
+                    // Pre-fill credentials if available from settings
+                    if (settings.gcal_client_id) {
+                        document.getElementById('gcal-client-id').value = settings.gcal_client_id;
+                    }
+                    if (settings.gcal_client_secret) {
+                        document.getElementById('gcal-client-secret').value = settings.gcal_client_secret;
+                    }
                 }
             }
         }
