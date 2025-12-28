@@ -297,8 +297,12 @@ async def get_calendar_auth_url(
         raise HTTPException(status_code=400, detail="No client_id found")
 
     # Build redirect URI from request
-    # Use the origin from the request headers or construct from host
-    redirect_uri = f"{request.base_url}api/calendar/callback"
+    # Railway terminates SSL at load balancer, so base_url shows http
+    # Force https for production redirect URIs
+    base_url = str(request.base_url)
+    if base_url.startswith("http://") and "localhost" not in base_url and "127.0.0.1" not in base_url:
+        base_url = base_url.replace("http://", "https://", 1)
+    redirect_uri = f"{base_url}api/calendar/callback"
 
     # Build auth URL
     params = {
