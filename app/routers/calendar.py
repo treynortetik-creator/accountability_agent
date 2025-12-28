@@ -167,8 +167,25 @@ async def calendar_status(
     _: str = Depends(verify_api_key),
 ):
     """Check if Google Calendar is connected."""
-    api_key = await get_calendar_api_key(db)
-    return {"connected": bool(api_key)}
+    from app.calendar_service import calendar_service
+    is_configured = await calendar_service.is_configured(db)
+    return {"connected": is_configured}
+
+
+@router.post("/sync")
+async def sync_calendar(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Manually trigger calendar sync from Google Calendar."""
+    from app.calendar_service import calendar_service
+
+    is_configured = await calendar_service.is_configured(db)
+    if not is_configured:
+        raise HTTPException(status_code=400, detail="Google Calendar not connected")
+
+    synced_count = await calendar_service.sync_events(db)
+    return {"status": "synced", "events_synced": synced_count}
 
 
 @router.post("/connect")

@@ -537,14 +537,25 @@ DASHBOARD_HTML = """
             <section id="section-calendar" class="section">
                 <div class="page-header">
                     <h1 class="page-title">Calendar</h1>
-                    <p class="page-subtitle">Upcoming events and deadlines</p>
+                    <p class="page-subtitle">Upcoming events and deadlines - synced from Google Calendar</p>
+                </div>
+                <div class="card" style="margin-bottom: 16px;">
+                    <div class="card-header">
+                        <h3 class="card-title">Calendar Status</h3>
+                        <span id="calendar-sync-status" class="badge badge-pending">Not synced</span>
+                    </div>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <button class="btn btn-primary" onclick="syncCalendar()">Sync Now</button>
+                        <button class="btn btn-secondary" onclick="addManualEvent()">+ Manual Event</button>
+                        <span id="last-sync-info" style="color: var(--text-muted); font-size: 13px;"></span>
+                    </div>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <h3 class="card-title">Upcoming Events</h3>
-                        <button class="btn btn-sm btn-secondary" onclick="addManualEvent()">+ Add Event</button>
+                        <h3 class="card-title">Upcoming Events (14 days)</h3>
+                        <span id="event-count" class="badge badge-pending">0</span>
                     </div>
-                    <div id="calendar-events"><div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events</p></div></div>
+                    <div id="calendar-events"><div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events. Connect Google Calendar in Settings to sync.</p></div></div>
                 </div>
             </section>
 
@@ -759,8 +770,62 @@ DASHBOARD_HTML = """
         async function loadCalendarEvents() {
             const events = await api('GET', '/calendar/events?days_ahead=14');
             const container = document.getElementById('calendar-events');
-            if (!events || !events.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events</p></div>'; return; }
-            container.innerHTML = events.map(e => `<div class="calendar-event"><div class="event-time">${e.all_day ? 'All day' : new Date(e.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div><div><div class="event-title">${e.title}</div>${e.location ? `<div class="event-location">📍 ${e.location}</div>` : ''}</div></div>`).join('');
+            const countBadge = document.getElementById('event-count');
+            const syncStatus = document.getElementById('calendar-sync-status');
+
+            if (!events || !events.length) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events. Connect Google Calendar in Settings to sync.</p></div>';
+                countBadge.textContent = '0';
+                return;
+            }
+
+            countBadge.textContent = events.length;
+            syncStatus.textContent = 'Synced';
+            syncStatus.className = 'badge badge-completed';
+
+            // Group events by date
+            const grouped = {};
+            events.forEach(e => {
+                const date = new Date(e.start_time).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                if (!grouped[date]) grouped[date] = [];
+                grouped[date].push(e);
+            });
+
+            let html = '';
+            for (const [date, dayEvents] of Object.entries(grouped)) {
+                html += `<div style="margin-bottom: 16px;">
+                    <div style="font-weight: 600; color: var(--accent); margin-bottom: 8px; font-size: 13px;">${date}</div>`;
+                dayEvents.forEach(e => {
+                    const time = e.all_day ? 'All day' : new Date(e.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                    html += `<div class="calendar-event">
+                        <div class="event-time">${time}</div>
+                        <div>
+                            <div class="event-title">${e.title}</div>
+                            ${e.location ? `<div class="event-location">📍 ${e.location}</div>` : ''}
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+            container.innerHTML = html;
+        }
+
+        async function syncCalendar() {
+            const syncStatus = document.getElementById('calendar-sync-status');
+            syncStatus.textContent = 'Syncing...';
+            syncStatus.className = 'badge badge-pending';
+
+            const result = await api('POST', '/calendar/sync');
+            if (result && result.status === 'synced') {
+                showToast(`Synced ${result.events_synced} events`);
+                syncStatus.textContent = 'Synced';
+                syncStatus.className = 'badge badge-completed';
+                loadCalendarEvents();
+            } else {
+                showToast('Sync failed. Is Google Calendar connected?', 'error');
+                syncStatus.textContent = 'Sync failed';
+                syncStatus.className = 'badge badge-overdue';
+            }
         }
 
         let allModels = [];

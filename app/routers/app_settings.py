@@ -1,6 +1,9 @@
 """Settings API router."""
 
+import logging
 import httpx
+
+logger = logging.getLogger(__name__)
 from typing import List, Optional
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -375,7 +378,14 @@ async def exchange_calendar_code(
 
             await set_setting(db, "google_calendar_token", json.dumps(token_data))
 
-            return {"status": "connected", "message": "Calendar connected successfully"}
+            # Trigger initial calendar sync
+            try:
+                from app.calendar_service import calendar_service
+                synced_count = await calendar_service.sync_events(db)
+                return {"status": "connected", "message": f"Calendar connected! Synced {synced_count} events."}
+            except Exception as sync_error:
+                logger.warning(f"Initial calendar sync failed: {sync_error}")
+                return {"status": "connected", "message": "Calendar connected. Sync will happen on next check-in."}
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
