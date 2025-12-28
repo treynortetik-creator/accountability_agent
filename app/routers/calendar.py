@@ -3,7 +3,8 @@
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from pydantic import BaseModel
@@ -16,6 +17,118 @@ from app.db_models import CalendarEvent, Settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
+
+
+@router.get("/callback", response_class=HTMLResponse)
+async def oauth_callback(
+    code: str = None,
+    error: str = None,
+):
+    """Handle Google OAuth callback - displays the auth code for user to copy."""
+    if error:
+        return HTMLResponse(content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Authorization Failed</title>
+            <style>
+                body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
+                       display: flex; justify-content: center; align-items: center;
+                       min-height: 100vh; margin: 0; }}
+                .container {{ text-align: center; padding: 40px; background: #16213e;
+                             border-radius: 12px; max-width: 500px; }}
+                h1 {{ color: #ff6b6b; }}
+                p {{ color: #aaa; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Authorization Failed</h1>
+                <p>Error: {error}</p>
+                <p>Please close this window and try again.</p>
+            </div>
+        </body>
+        </html>
+        """)
+
+    if not code:
+        return HTMLResponse(content="""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>No Code Received</title>
+            <style>
+                body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
+                       display: flex; justify-content: center; align-items: center;
+                       min-height: 100vh; margin: 0; }
+                .container { text-align: center; padding: 40px; background: #16213e;
+                             border-radius: 12px; max-width: 500px; }
+                h1 { color: #ff6b6b; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>No Authorization Code</h1>
+                <p>No authorization code was received. Please try again.</p>
+            </div>
+        </body>
+        </html>
+        """)
+
+    # Return HTML that shows the code and tries to send it back to opener window
+    return HTMLResponse(content=f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Authorization Successful</title>
+        <style>
+            body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
+                   display: flex; justify-content: center; align-items: center;
+                   min-height: 100vh; margin: 0; }}
+            .container {{ text-align: center; padding: 40px; background: #16213e;
+                         border-radius: 12px; max-width: 600px; }}
+            h1 {{ color: #4ecdc4; margin-bottom: 20px; }}
+            .code-box {{ background: #0f0f23; padding: 15px; border-radius: 8px;
+                        word-break: break-all; font-family: monospace; font-size: 12px;
+                        margin: 20px 0; border: 1px solid #333; }}
+            .success {{ color: #4ecdc4; font-size: 48px; margin-bottom: 10px; }}
+            .instructions {{ color: #aaa; margin-top: 20px; }}
+            button {{ background: #4ecdc4; color: #1a1a2e; border: none; padding: 12px 24px;
+                     border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; }}
+            button:hover {{ background: #3dbdb5; }}
+            #status {{ margin-top: 15px; color: #4ecdc4; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="success">✓</div>
+            <h1>Authorization Successful!</h1>
+            <p>Copy this code and paste it in The Warden settings:</p>
+            <div class="code-box" id="code">{code}</div>
+            <button onclick="copyCode()">Copy Code</button>
+            <p id="status"></p>
+            <p class="instructions">After copying, close this window and paste the code in the authorization field.</p>
+        </div>
+        <script>
+            function copyCode() {{
+                const code = document.getElementById('code').textContent;
+                navigator.clipboard.writeText(code).then(() => {{
+                    document.getElementById('status').textContent = 'Copied to clipboard!';
+                }});
+            }}
+
+            // Try to auto-send code to opener window
+            if (window.opener) {{
+                try {{
+                    window.opener.postMessage({{ type: 'google-auth-code', code: '{code}' }}, '*');
+                }} catch(e) {{
+                    console.log('Could not send to opener:', e);
+                }}
+            }}
+        </script>
+    </body>
+    </html>
+    """)
 
 
 class CalendarEventResponse(BaseModel):

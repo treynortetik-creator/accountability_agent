@@ -905,6 +905,15 @@ DASHBOARD_HTML = """
         async function triggerCheckin() { await api('POST', '/trigger/checkin'); showToast('Check-in triggered'); setTimeout(loadDashboard, 2000); }
         async function triggerWeeklyReview() { await api('POST', '/trigger/weekly-review'); showToast('Weekly review triggered'); }
         function addManualEvent() { const title = prompt('Event title:'); if (!title) return; const dateStr = prompt('Date (YYYY-MM-DD):'); if (!dateStr) return; api('POST', `/calendar/events/manual?title=${encodeURIComponent(title)}&start_time=${dateStr}T09:00:00`).then(() => { showToast('Event added'); loadCalendarEvents(); }); }
+
+        // Listen for auth code from popup window
+        window.addEventListener('message', async function(event) {
+            if (event.data && event.data.type === 'google-auth-code' && event.data.code) {
+                document.getElementById('gcal-auth-code').value = event.data.code;
+                document.getElementById('auth-code-section').style.display = 'block';
+                showToast('Authorization code received! Click Submit to complete.');
+            }
+        });
     </script>
 </body>
 </html>
