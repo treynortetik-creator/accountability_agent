@@ -495,7 +495,7 @@ async def create_schedule(
         is_active=schedule.is_active,
     )
     db.add(db_schedule)
-    await db.flush()
+    await db.commit()
     await db.refresh(db_schedule)
 
     # Reload scheduler with new schedules
@@ -524,7 +524,7 @@ async def update_schedule(
     for field, value in update_data.items():
         setattr(schedule, field, value)
 
-    await db.flush()
+    await db.commit()
     await db.refresh(schedule)
 
     # Reload scheduler
@@ -549,7 +549,7 @@ async def delete_schedule(
         raise HTTPException(status_code=404, detail="Schedule not found")
 
     await db.delete(schedule)
-    await db.flush()
+    await db.commit()
 
     # Reload scheduler
     from app.scheduler import reload_custom_schedules
@@ -645,7 +645,7 @@ async def update_prompt_template(
         )
         db.add(new_prompt)
 
-    await db.flush()
+    await db.commit()
     return {"status": "updated", "prompt_type": prompt_type}
 
 
@@ -663,7 +663,7 @@ async def reset_prompt_template(
 
     if existing:
         await db.delete(existing)
-        await db.flush()
+        await db.commit()
 
     default = DEFAULT_PROMPTS.get(prompt_type, "")
     return {"status": "reset", "prompt_template": default}

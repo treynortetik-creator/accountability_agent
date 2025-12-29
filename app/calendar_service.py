@@ -199,15 +199,15 @@ class CalendarService:
 
             # Delete events that were removed from Google Calendar
             # (events not in the current sync response)
+            # NOTE: Only delete if we synced events from Google.
+            # If google_event_ids is empty, preserve existing events to avoid
+            # data loss in case of API errors or network issues.
             if google_event_ids:
                 await db.execute(
                     delete(CalendarEvent).where(
                         CalendarEvent.google_event_id.not_in(google_event_ids)
                     )
                 )
-            else:
-                # If no events from Google, delete all
-                await db.execute(delete(CalendarEvent))
 
             await db.flush()
             logger.info(f"Synced {synced_count} calendar events")
