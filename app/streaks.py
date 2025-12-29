@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db_models import Streak, CheckIn, Commitment, CommitmentStatus
+from app.db_models import Streak, Commitment, CommitmentStatus
 
 logger = logging.getLogger(__name__)
 

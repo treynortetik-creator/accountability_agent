@@ -28,8 +28,6 @@ _models_cache = {
 
 async def fetch_openrouter_models() -> List[dict]:
     """Fetch all available models from OpenRouter API."""
-    global _models_cache
-
     # Return cached if still valid
     if (_models_cache["last_fetch"] and
         datetime.now() - _models_cache["last_fetch"] < _models_cache["cache_duration"] and

@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_

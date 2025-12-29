@@ -276,7 +276,7 @@ async def try_parse_commitment(db, message_text: str, context: dict) -> tuple[bo
     else:
         confirmation = f'Sounds like you want to commit to "{parsed["title"]}" - no deadline mentioned though. Want me to add this? (yes/no)'
 
-    return True, " ".join(confirmation_parts)
+    return True, confirmation
 
 
 @router.post("/telegram")
@@ -367,7 +367,6 @@ async def telegram_webhook(request: Request):
 
             # Calculate days since last shipped
             from app.db_models import CommitmentStatus
-            from sqlalchemy import func
 
             last_shipped = await db.execute(
                 select(Commitment)

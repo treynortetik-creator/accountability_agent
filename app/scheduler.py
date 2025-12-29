@@ -1,7 +1,6 @@
 """Scheduled jobs for The Warden using APScheduler."""
 
 import logging
-import json
 from datetime import datetime, timedelta
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -892,3 +891,105 @@ async def reschedule_jobs(config: dict):
         ),
     )
     logger.info(f"Rescheduled weekly review to {weekly_day} at {weekly_hour}:{weekly_minute:02d}")
+
+
+async def custom_schedule_job(schedule_id: int, schedule_name: str, prompt_template: str = None):
+    """Execute a custom scheduled check-in job."""
+    async with async_session_maker() as db:
+        try:
+            # Build context for the message
+            context = await get_context(db)
+
+            # Generate message using the custom prompt or default
+            message = await generate_message(
+                "daily_checkin",
+                context,
+                custom_prompt=prompt_template
+            )
+
+            if message:
+                # Send via Telegram
+                message_id = await telegram_service.send_message(
+                    message,
+                    message_type="check_in"
+                )
+
+                # Record the check-in
+                checkin = CheckIn(
+                    type=CheckInType.DAILY,
+                    message=message,
+                    telegram_message_id=message_id,
+                )
+                db.add(checkin)
+
+                # Record in chat history
+                chat_msg = ChatMessage(
+                    sender="warden",
+                    message=message,
+                    message_type="check_in",
+                )
+                db.add(chat_msg)
+
+                await db.commit()
+                logger.info(f"Custom schedule '{schedule_name}' executed successfully")
+            else:
+                logger.warning(f"Custom schedule '{schedule_name}' generated no message")
+
+        except Exception as e:
+            logger.error(f"Error executing custom schedule '{schedule_name}': {e}")
+            await db.rollback()
+
+
+async def load_custom_schedules_on_startup():
+    """Load custom check-in schedules from database and register them with the scheduler."""
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(
+                select(CheckInSchedule).where(CheckInSchedule.is_active == True)
+            )
+            schedules = result.scalars().all()
+
+            tz = pytz.timezone(settings.timezone)
+
+            for schedule in schedules:
+                job_id = f"custom_schedule_{schedule.id}"
+
+                # Parse days of week
+                if schedule.days_of_week:
+                    days = schedule.days_of_week.lower().split(",")
+                    day_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+                    day_of_week = ",".join(str(day_map.get(d.strip(), 0)) for d in days)
+                else:
+                    day_of_week = "*"  # Every day
+
+                # Register the job
+                scheduler.add_job(
+                    custom_schedule_job,
+                    CronTrigger(
+                        day_of_week=day_of_week,
+                        hour=schedule.hour,
+                        minute=schedule.minute or 0,
+                        timezone=tz,
+                    ),
+                    id=job_id,
+                    args=[schedule.id, schedule.name, schedule.prompt_template],
+                    replace_existing=True,
+                )
+                logger.info(f"Loaded custom schedule: {schedule.name} at {schedule.hour}:{schedule.minute or 0:02d}")
+
+            logger.info(f"Loaded {len(schedules)} custom schedules")
+
+        except Exception as e:
+            logger.error(f"Error loading custom schedules: {e}")
+
+
+async def reload_custom_schedules():
+    """Reload all custom schedules from database (called when schedules are modified)."""
+    # Remove existing custom schedule jobs
+    for job in scheduler.get_jobs():
+        if job.id.startswith("custom_schedule_"):
+            scheduler.remove_job(job.id)
+            logger.debug(f"Removed job: {job.id}")
+
+    # Reload from database
+    await load_custom_schedules_on_startup()
