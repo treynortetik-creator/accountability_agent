@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select, and_
 from app.database import async_session_maker
-from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus
+from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus, Settings, ScheduledFollowup, MoodLog, ErrorLog
 from app.telegram_bot import parse_telegram_update, telegram_service
 from app.llm import analyze_response, parse_commitment
 from app.scheduler import get_context
@@ -521,8 +521,32 @@ async def telegram_webhook(request: Request):
             return {"ok": True}
 
         except Exception as e:
+            import traceback
+            import json as json_module
+
+            error_trace = traceback.format_exc()
             logger.error(f"Failed to process webhook: {e}", exc_info=True)
             await db.rollback()
+
+            # Log the error to database for UI visibility
+            try:
+                async with async_session_maker() as error_db:
+                    error_log = ErrorLog(
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                        stack_trace=error_trace,
+                        context=json_module.dumps({
+                            "message_id": parsed.get("message_id") if parsed else None,
+                            "chat_id": parsed.get("chat_id") if parsed else None,
+                        }),
+                        source="webhook",
+                        user_message=message_text,
+                    )
+                    error_db.add(error_log)
+                    await error_db.commit()
+                    logger.info(f"Error logged to database: {error_log.id}")
+            except Exception as log_error:
+                logger.error(f"Failed to log error to database: {log_error}")
 
             # Try to send an error acknowledgment to the user
             try:

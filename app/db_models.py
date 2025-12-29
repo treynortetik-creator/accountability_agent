@@ -243,3 +243,47 @@ class CheckInPrompt(Base):
     prompt_template = Column(Text, nullable=False)
     is_custom = Column(Boolean, default=False)  # True if user has customized it
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ScheduledFollowup(Base):
+    """Scheduled follow-up messages for specific topics."""
+
+    __tablename__ = "scheduled_followups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    topic = Column(String(255), nullable=False)
+    reason = Column(Text, nullable=True)
+    scheduled_time = Column(DateTime, nullable=False)
+    sent = Column(Boolean, default=False)
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MoodLog(Base):
+    """Track detected mood and energy levels over time."""
+
+    __tablename__ = "mood_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    mood_score = Column(Integer, nullable=True)  # 1-10 scale
+    energy_level = Column(String(20), nullable=True)  # low, medium, high
+    detected_from = Column(String(50), nullable=True)  # llm_analysis, user_input, etc.
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ErrorLog(Base):
+    """Track application errors for debugging and monitoring."""
+
+    __tablename__ = "error_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    error_type = Column(String(100), nullable=False)  # Exception class name
+    error_message = Column(Text, nullable=False)
+    stack_trace = Column(Text, nullable=True)
+    context = Column(Text, nullable=True)  # JSON with additional context
+    source = Column(String(100), nullable=True)  # webhook, scheduler, etc.
+    user_message = Column(Text, nullable=True)  # The message that triggered the error
+    resolved = Column(Boolean, default=False)
+    resolved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

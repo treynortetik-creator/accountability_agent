@@ -540,6 +540,11 @@ DASHBOARD_HTML = """
                 <div class="nav-label">Configuration</div>
                 <div class="nav-item" onclick="showSection('settings')"><span class="icon">⚙️</span> Settings</div>
             </div>
+
+            <div class="nav-section">
+                <div class="nav-label">System</div>
+                <div class="nav-item" onclick="showSection('errors')"><span class="icon">🐛</span> Error Log <span id="error-count-badge" class="badge badge-pending" style="margin-left: auto; display: none;">0</span></div>
+            </div>
         </aside>
 
         <main class="main-content">
@@ -962,6 +967,50 @@ DASHBOARD_HTML = """
                     </div>
                 </div>
             </section>
+
+            <section id="section-errors" class="section">
+                <div class="page-header">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h1 class="page-title">Error Log</h1>
+                            <p class="page-subtitle">Track and resolve application errors</p>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-secondary" onclick="loadErrors()">Refresh</button>
+                            <button class="btn btn-success" onclick="resolveAllErrors()">Resolve All</button>
+                            <button class="btn btn-danger" onclick="clearResolvedErrors()">Clear Resolved</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="metric-card"><div class="metric-label">Total Errors</div><div class="metric-value" id="error-total">--</div></div>
+                    <div class="metric-card warning"><div class="metric-label">Unresolved</div><div class="metric-value" id="error-unresolved">--</div></div>
+                    <div class="metric-card success"><div class="metric-label">Resolved</div><div class="metric-value" id="error-resolved">--</div></div>
+                    <div class="metric-card info"><div class="metric-label">Last 24h</div><div class="metric-value" id="error-recent">--</div></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Recent Errors</h3>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);">
+                            <input type="checkbox" id="unresolved-only" onchange="loadErrors()"> Show unresolved only
+                        </label>
+                    </div>
+                    <div id="errors-list"><div class="empty-state">Loading...</div></div>
+                </div>
+
+                <!-- Error Detail Modal -->
+                <div id="error-detail-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: 800px; width: 90%; max-height: 80vh; overflow-y: auto;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <h3 id="error-detail-title" style="font-size: 18px;">Error Details</h3>
+                            <button class="btn btn-secondary btn-sm" onclick="closeErrorDetail()">✕ Close</button>
+                        </div>
+                        <div id="error-detail-content"></div>
+                    </div>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -1021,6 +1070,7 @@ DASHBOARD_HTML = """
             if (name === 'goals') loadGoals();
             if (name === 'calendar') loadCalendarEvents();
             if (name === 'settings') loadSettings();
+            if (name === 'errors') loadErrors();
             // Close sidebar on mobile after navigation
             closeSidebar();
         }
@@ -1892,6 +1942,175 @@ DASHBOARD_HTML = """
                 document.getElementById('auth-code-section').style.display = 'block';
                 showToast('Authorization code received! Click Submit to complete.');
             }
+        });
+
+        // ========== Error Log Functions ==========
+        async function loadErrors() {
+            const unresolvedOnly = document.getElementById('unresolved-only').checked;
+            const errors = await api('GET', `/errors?limit=50&unresolved_only=${unresolvedOnly}`);
+            const stats = await api('GET', '/errors/stats');
+
+            // Update stats
+            if (stats) {
+                document.getElementById('error-total').textContent = stats.total_errors;
+                document.getElementById('error-unresolved').textContent = stats.unresolved_count;
+                document.getElementById('error-resolved').textContent = stats.resolved_count;
+                document.getElementById('error-recent').textContent = stats.errors_last_24h;
+
+                // Update badge in nav
+                const badge = document.getElementById('error-count-badge');
+                if (stats.unresolved_count > 0) {
+                    badge.textContent = stats.unresolved_count;
+                    badge.style.display = 'inline-flex';
+                    badge.className = 'badge badge-failed';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+
+            const container = document.getElementById('errors-list');
+            if (!errors || !errors.length) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><p>No errors found. System is running smoothly!</p></div>';
+                return;
+            }
+
+            container.innerHTML = errors.map(e => {
+                const statusBadge = e.resolved
+                    ? '<span class="badge badge-completed">Resolved</span>'
+                    : '<span class="badge badge-failed">Unresolved</span>';
+                const sourceBadge = e.source ? `<span class="badge badge-pending" style="margin-left: 4px;">${e.source}</span>` : '';
+                const date = new Date(e.created_at).toLocaleString();
+
+                return `<div class="list-item" style="border-left: 3px solid ${e.resolved ? 'var(--success)' : 'var(--danger)'};">
+                    <div style="flex: 1; min-width: 0;">
+                        <div class="list-item-title" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <span style="color: var(--danger); font-family: 'JetBrains Mono', monospace;">${e.error_type}</span>
+                            ${statusBadge}
+                            ${sourceBadge}
+                        </div>
+                        <div class="list-item-meta" style="margin-top: 4px; word-break: break-word;">${e.error_message}</div>
+                        <div class="list-item-meta" style="margin-top: 4px; font-size: 11px;">📅 ${date}</div>
+                    </div>
+                    <div class="list-item-actions" style="flex-shrink: 0;">
+                        <button class="btn btn-sm btn-secondary" onclick="viewErrorDetail(${e.id})">Details</button>
+                        ${!e.resolved ? `<button class="btn btn-sm btn-success" onclick="resolveError(${e.id})">Resolve</button>` : ''}
+                        <button class="btn btn-sm btn-danger" onclick="deleteError(${e.id})">🗑️</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function loadErrorStats() {
+            const stats = await api('GET', '/errors/stats');
+            if (stats) {
+                const badge = document.getElementById('error-count-badge');
+                if (stats.unresolved_count > 0) {
+                    badge.textContent = stats.unresolved_count;
+                    badge.style.display = 'inline-flex';
+                    badge.className = 'badge badge-failed';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        async function viewErrorDetail(id) {
+            const error = await api('GET', `/errors/${id}`);
+            if (!error) return;
+
+            const modal = document.getElementById('error-detail-modal');
+            const content = document.getElementById('error-detail-content');
+            const title = document.getElementById('error-detail-title');
+
+            title.textContent = `${error.error_type} - ${new Date(error.created_at).toLocaleString()}`;
+
+            let html = `
+                <div style="margin-bottom: 16px;">
+                    <div style="font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">Error Message</div>
+                    <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--danger);">${error.error_message}</div>
+                </div>
+            `;
+
+            if (error.user_message) {
+                html += `
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">User Message (Trigger)</div>
+                        <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; font-size: 13px;">${error.user_message}</div>
+                    </div>
+                `;
+            }
+
+            if (error.stack_trace) {
+                html += `
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">Stack Trace</div>
+                        <pre style="background: var(--bg-primary); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto;">${error.stack_trace}</pre>
+                    </div>
+                `;
+            }
+
+            if (error.context) {
+                html += `
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">Context</div>
+                        <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px;">${error.context}</pre>
+                    </div>
+                `;
+            }
+
+            html += `
+                <div style="display: flex; gap: 8px; margin-top: 16px;">
+                    ${!error.resolved ? `<button class="btn btn-success" onclick="resolveError(${error.id}); closeErrorDetail();">Mark Resolved</button>` : '<span class="badge badge-completed" style="padding: 10px 16px;">✓ Resolved</span>'}
+                    <button class="btn btn-danger" onclick="deleteError(${error.id}); closeErrorDetail();">Delete</button>
+                </div>
+            `;
+
+            content.innerHTML = html;
+            modal.style.display = 'flex';
+        }
+
+        function closeErrorDetail() {
+            document.getElementById('error-detail-modal').style.display = 'none';
+        }
+
+        async function resolveError(id) {
+            const result = await api('POST', `/errors/${id}/resolve`);
+            if (result) {
+                showToast('Error marked as resolved');
+                loadErrors();
+            }
+        }
+
+        async function resolveAllErrors() {
+            if (!confirm('Mark all errors as resolved?')) return;
+            const result = await api('POST', '/errors/resolve-all');
+            if (result) {
+                showToast(`Resolved ${result.count} errors`);
+                loadErrors();
+            }
+        }
+
+        async function deleteError(id) {
+            if (!confirm('Delete this error log?')) return;
+            const result = await api('DELETE', `/errors/${id}`);
+            if (result) {
+                showToast('Error deleted');
+                loadErrors();
+            }
+        }
+
+        async function clearResolvedErrors() {
+            if (!confirm('Delete all resolved error logs?')) return;
+            const result = await api('DELETE', '/errors');
+            if (result) {
+                showToast(`Cleared ${result.count} resolved errors`);
+                loadErrors();
+            }
+        }
+
+        // Load error count on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(loadErrorStats, 1000);
         });
     </script>
 </body>
