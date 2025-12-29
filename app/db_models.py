@@ -209,7 +209,9 @@ class PendingCommitmentParse(Base):
     parsed_due_date = Column(DateTime, nullable=True)
     parsed_description = Column(Text, nullable=True)
     confirmation_message_id = Column(String(100), nullable=True)
-    status = Column(String(20), default="pending")  # pending, confirmed, rejected
+    status = Column(String(20), default="pending")  # pending, confirmed, rejected, breakdown_pending
+    suggested_breakdown = Column(Text, nullable=True)  # JSON array of breakdown steps
+    is_large = Column(Boolean, default=False)  # Whether this was flagged as a large commitment
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)  # Auto-expire after some time
 

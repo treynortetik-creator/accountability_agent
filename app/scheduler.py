@@ -139,6 +139,39 @@ async def get_context(db: AsyncSession) -> dict:
     # Get calendar context
     calendar_ctx = await calendar_service.get_calendar_context(db)
 
+    # Get chat history count setting (default 15)
+    chat_count_result = await db.execute(
+        select(Settings).where(Settings.key == "chat_history_count")
+    )
+    chat_count_setting = chat_count_result.scalar_one_or_none()
+    chat_history_count = int(chat_count_setting.value) if chat_count_setting else 15
+
+    # Get recent chat history
+    chat_result = await db.execute(
+        select(ChatMessage)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(chat_history_count)
+    )
+    chat_messages = list(reversed(chat_result.scalars().all()))  # Oldest first
+    chat_history = [
+        {"role": m.role, "content": m.content, "timestamp": m.created_at.isoformat()}
+        for m in chat_messages
+    ]
+
+    # Get LLM memory
+    memory_result = await db.execute(
+        select(Settings).where(Settings.key == "llm_memory")
+    )
+    memory_setting = memory_result.scalar_one_or_none()
+    llm_memory = memory_setting.value if memory_setting else ""
+
+    # Get accountability intensity (default 3 = balanced)
+    intensity_result = await db.execute(
+        select(Settings).where(Settings.key == "accountability_intensity")
+    )
+    intensity_setting = intensity_result.scalar_one_or_none()
+    accountability_intensity = int(intensity_setting.value) if intensity_setting else 3
+
     return {
         "goals": goals,
         "pending_commitments": pending,
@@ -149,6 +182,9 @@ async def get_context(db: AsyncSession) -> dict:
         "completion_rate": round(completion_rate, 1),
         "streaks": streaks,
         "calendar": calendar_ctx,
+        "chat_history": chat_history,
+        "llm_memory": llm_memory,
+        "accountability_intensity": accountability_intensity,
     }
 
 
@@ -292,7 +328,7 @@ async def weekly_review_job():
 
 
 async def silence_detector_job():
-    """Check for unanswered check-ins and escalate."""
+    """Check for unanswered check-ins and escalate with personalized timing."""
     logger.info("Running silence detector job")
 
     async with async_session_maker() as db:
@@ -315,8 +351,26 @@ async def silence_detector_job():
             # Calculate hours since last check-in
             hours_since = (datetime.utcnow() - last_checkin.sent_at).total_seconds() / 3600
 
-            if hours_since < settings.silence_threshold_hours:
-                logger.info(f"Only {hours_since:.1f} hours since last check-in, under threshold")
+            # ENHANCED: Calculate personalized threshold based on user's typical response time
+            avg_response_result = await db.execute(
+                select(func.avg(ResponseTiming.response_time_minutes)).where(
+                    ResponseTiming.did_respond == True
+                )
+            )
+            avg_response_minutes = avg_response_result.scalar()
+
+            # Use personalized threshold if we have enough data, otherwise use default
+            if avg_response_minutes and avg_response_minutes > 0:
+                # If they usually respond in X minutes, alert after 3x that time (minimum 2 hours)
+                personalized_threshold_hours = max(2, (avg_response_minutes * 3) / 60)
+                # But don't exceed the configured maximum
+                threshold_hours = min(personalized_threshold_hours, settings.silence_threshold_hours)
+                logger.info(f"Using personalized silence threshold: {threshold_hours:.1f}h (avg response: {avg_response_minutes:.0f}min)")
+            else:
+                threshold_hours = settings.silence_threshold_hours
+
+            if hours_since < threshold_hours:
+                logger.info(f"Only {hours_since:.1f} hours since last check-in, under threshold ({threshold_hours:.1f}h)")
                 return
 
             # Check if we already escalated recently (within 12 hours)
@@ -337,6 +391,13 @@ async def silence_detector_job():
             context = await get_context(db)
             context["hours_since_response"] = hours_since
             context["last_checkin_answered"] = False
+            # Add personalized context
+            if avg_response_minutes and avg_response_minutes > 0:
+                context["usual_response_time"] = f"{int(avg_response_minutes)} minutes"
+                context["silence_is_unusual"] = hours_since > (avg_response_minutes * 2 / 60)
+            else:
+                context["usual_response_time"] = "unknown"
+                context["silence_is_unusual"] = False
 
             message = await generate_message("escalation", context)
             msg_id = await telegram_service.send_escalation(message)
@@ -524,6 +585,190 @@ async def deadline_alert_job():
 
         except Exception as e:
             logger.error(f"Deadline alert failed: {e}")
+            await db.rollback()
+
+
+async def scheduled_followup_job():
+    """Check for and send pending follow-ups."""
+    logger.info("Checking for scheduled follow-ups")
+
+    async with async_session_maker() as db:
+        try:
+            now = datetime.utcnow()
+
+            # Find pending follow-ups that are due
+            result = await db.execute(
+                select(ScheduledFollowup).where(
+                    and_(
+                        ScheduledFollowup.status == "pending",
+                        ScheduledFollowup.scheduled_time <= now,
+                    )
+                )
+            )
+            followups = result.scalars().all()
+
+            for followup in followups:
+                # Generate a message about the topic
+                context = await get_context(db)
+                context["followup_topic"] = followup.topic
+                context["followup_reason"] = followup.reason
+
+                message = await generate_message("followup", context)
+                msg_id = await telegram_service.send_message(message)
+
+                # Mark as sent
+                followup.status = "sent"
+                followup.sent_at = datetime.utcnow()
+
+                # Record in check-in table
+                checkin = CheckIn(
+                    check_in_type=CheckInType.MANUAL,
+                    message_sent=message,
+                    telegram_message_id=msg_id,
+                )
+                db.add(checkin)
+
+                # Save to chat history
+                chat_msg = ChatMessage(
+                    role="warden",
+                    content=message,
+                    message_type="followup",
+                    telegram_message_id=msg_id,
+                )
+                db.add(chat_msg)
+
+                logger.info(f"Sent follow-up on '{followup.topic}'")
+
+            await db.commit()
+            if followups:
+                logger.info(f"Processed {len(followups)} follow-ups")
+
+        except Exception as e:
+            logger.error(f"Follow-up job failed: {e}", exc_info=True)
+            await db.rollback()
+
+
+async def weekly_insights_job():
+    """Generate and send weekly insights on Sunday evening."""
+    logger.info("Generating weekly insights")
+
+    async with async_session_maker() as db:
+        try:
+            # Calculate week range (Monday to Sunday)
+            tz = pytz.timezone(settings.timezone)
+            now = datetime.now(tz)
+            week_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+            week_start = week_end - timedelta(days=6)
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # Convert to UTC for queries
+            week_start_utc = week_start.astimezone(pytz.UTC).replace(tzinfo=None)
+            week_end_utc = week_end.astimezone(pytz.UTC).replace(tzinfo=None)
+
+            # Check if we already generated insights for this week
+            existing = await db.execute(
+                select(WeeklyInsight).where(
+                    and_(
+                        WeeklyInsight.week_start >= week_start_utc - timedelta(hours=12),
+                        WeeklyInsight.week_start <= week_start_utc + timedelta(hours=12),
+                    )
+                )
+            )
+            if existing.scalar_one_or_none():
+                logger.info("Weekly insights already generated for this week")
+                return
+
+            # Gather metrics for the week
+            # Commitments created
+            created_result = await db.execute(
+                select(func.count(Commitment.id)).where(
+                    Commitment.created_at.between(week_start_utc, week_end_utc)
+                )
+            )
+            commitments_created = created_result.scalar() or 0
+
+            # Commitments completed
+            completed_result = await db.execute(
+                select(func.count(Commitment.id)).where(
+                    and_(
+                        Commitment.status == CommitmentStatus.COMPLETED,
+                        Commitment.completed_at.between(week_start_utc, week_end_utc),
+                    )
+                )
+            )
+            commitments_completed = completed_result.scalar() or 0
+
+            # Response rate
+            checkins_result = await db.execute(
+                select(CheckIn).where(
+                    CheckIn.sent_at.between(week_start_utc, week_end_utc)
+                )
+            )
+            checkins = checkins_result.scalars().all()
+            response_rate = 0
+            if checkins:
+                responded = sum(1 for c in checkins if c.response_received)
+                response_rate = round(responded / len(checkins) * 100, 1)
+
+            # Average mood (if tracked)
+            mood_result = await db.execute(
+                select(func.avg(MoodLog.mood_score)).where(
+                    MoodLog.created_at.between(week_start_utc, week_end_utc)
+                )
+            )
+            avg_mood = mood_result.scalar()
+            avg_mood = round(avg_mood, 1) if avg_mood else None
+
+            # Build metrics
+            metrics = {
+                "commitments_created": commitments_created,
+                "commitments_completed": commitments_completed,
+                "completion_rate": round(commitments_completed / commitments_created * 100, 1) if commitments_created > 0 else 0,
+                "response_rate": response_rate,
+                "avg_mood": avg_mood,
+            }
+
+            # Get context for LLM to generate insights
+            context = await get_context(db)
+            context["weekly_metrics"] = metrics
+            context["week_start"] = week_start.strftime("%B %d")
+            context["week_end"] = week_end.strftime("%B %d")
+
+            message = await generate_message("weekly_insights", context)
+            msg_id = await telegram_service.send_message(message)
+
+            # Save insight
+            insight = WeeklyInsight(
+                week_start=week_start_utc,
+                week_end=week_end_utc,
+                summary=message,
+                metrics=json.dumps(metrics),
+                sent_at=datetime.utcnow(),
+            )
+            db.add(insight)
+
+            # Record check-in
+            checkin = CheckIn(
+                check_in_type=CheckInType.WEEKLY_REVIEW,
+                message_sent=message,
+                telegram_message_id=msg_id,
+            )
+            db.add(checkin)
+
+            # Save to chat history
+            chat_msg = ChatMessage(
+                role="warden",
+                content=message,
+                message_type="weekly_insights",
+                telegram_message_id=msg_id,
+            )
+            db.add(chat_msg)
+
+            await db.commit()
+            logger.info("Weekly insights generated and sent")
+
+        except Exception as e:
+            logger.error(f"Weekly insights job failed: {e}", exc_info=True)
             await db.rollback()
 
 

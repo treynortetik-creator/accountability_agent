@@ -578,11 +578,103 @@ DASHBOARD_HTML = """
                             <h1 class="page-title">Chat History</h1>
                             <p class="page-subtitle">Your conversation with The Warden</p>
                         </div>
-                        <button class="btn btn-secondary" onclick="loadChatHistory()">Refresh</button>
+                        <div style="display: flex; gap: 12px; align-items: center;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label style="font-size: 12px; color: var(--text-secondary);">LLM Context:</label>
+                                <input type="number" id="chat-history-count" class="form-input" style="width: 60px; padding: 4px 8px;" value="15" min="0" max="100" onchange="updateChatHistoryCount(this.value)" />
+                                <span style="font-size: 11px; color: var(--text-muted);">messages</span>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadChatHistory()">Refresh</button>
+                        </div>
                     </div>
                 </div>
                 <div class="chat-container">
                     <div class="chat-messages" id="chat-messages"><div class="empty-state">Loading...</div></div>
+                </div>
+
+                <!-- LLM Memory Section -->
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-header" style="cursor: pointer;" onclick="toggleMemoryPanel()">
+                        <h3 class="card-title">🧠 Warden's Memory</h3>
+                        <span id="memory-toggle-icon" style="font-size: 18px;">▼</span>
+                    </div>
+                    <div id="memory-panel" style="display: none;">
+                        <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 12px;">
+                            The Warden's learned observations about you. This updates automatically after conversations.
+                        </p>
+                        <div class="form-group">
+                            <textarea id="llm-memory" class="form-textarea" style="min-height: 200px; font-family: 'JetBrains Mono', monospace; font-size: 12px;"></textarea>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-primary" onclick="saveMemory()">Save Memory</button>
+                            <button class="btn btn-secondary" onclick="clearMemory()">Clear All</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Agent Intelligence Section -->
+                <div class="card" style="margin-top: 16px;">
+                    <div class="card-header" style="cursor: pointer;" onclick="toggleAgentPanel()">
+                        <h3 class="card-title">🤖 Agent Intelligence</h3>
+                        <span id="agent-toggle-icon" style="font-size: 18px;">▼</span>
+                    </div>
+                    <div id="agent-panel" style="display: none;">
+                        <!-- Accountability Intensity -->
+                        <div style="padding: 16px; border-bottom: 1px solid var(--border);">
+                            <label class="form-label">Accountability Intensity</label>
+                            <div style="display: flex; align-items: center; gap: 16px;">
+                                <input type="range" id="intensity-slider" min="1" max="5" value="3"
+                                    style="flex: 1;" onchange="updateIntensity(this.value)">
+                                <span id="intensity-label" style="min-width: 120px; color: var(--text-secondary);">Balanced (3)</span>
+                            </div>
+                            <p style="font-size: 12px; color: var(--text-muted); margin-top: 8px;">
+                                1 = Gentle & supportive • 3 = Balanced • 5 = Intense & demanding
+                            </p>
+                        </div>
+
+                        <!-- Thinking Level -->
+                        <div style="padding: 16px; border-bottom: 1px solid var(--border);">
+                            <label class="form-label">Thinking Level (Reasoning Depth)</label>
+                            <div style="display: flex; align-items: center; gap: 12px; margin-top: 8px;">
+                                <select id="thinking-level" class="form-input" style="width: auto;" onchange="updateThinkingLevel(this.value)">
+                                    <option value="off">Off (Fastest)</option>
+                                    <option value="minimal">Minimal</option>
+                                    <option value="low">Low</option>
+                                    <option value="medium" selected>Medium (Recommended)</option>
+                                    <option value="high">High (Deepest)</option>
+                                </select>
+                                <span id="thinking-cost" style="font-size: 12px; color: var(--text-muted);">💰 Moderate cost</span>
+                            </div>
+                            <p style="font-size: 12px; color: var(--text-muted); margin-top: 8px;">
+                                Higher = better judgment but slower & more expensive. For Gemini 3 Flash and other thinking models.
+                            </p>
+                        </div>
+
+                        <!-- Mood Trend -->
+                        <div style="padding: 16px; border-bottom: 1px solid var(--border);">
+                            <label class="form-label">Mood Trend (Last 7 Days)</label>
+                            <div id="mood-trend" style="display: flex; gap: 16px; margin-top: 8px;">
+                                <div style="text-align: center;">
+                                    <div style="font-size: 24px;" id="avg-mood-icon">😐</div>
+                                    <div style="font-size: 12px; color: var(--text-muted);">Avg Mood</div>
+                                    <div id="avg-mood-value" style="font-weight: 600;">--</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 24px;">⚡</div>
+                                    <div style="font-size: 12px; color: var(--text-muted);">Avg Energy</div>
+                                    <div id="avg-energy-value" style="font-weight: 600;">--</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Scheduled Follow-ups -->
+                        <div style="padding: 16px;">
+                            <label class="form-label">Scheduled Follow-ups</label>
+                            <div id="followups-list" style="margin-top: 8px;">
+                                <div class="empty-state" style="padding: 16px; font-size: 13px;">No scheduled follow-ups</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -1005,6 +1097,170 @@ DASHBOARD_HTML = """
             if (!messages || !messages.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><p>No messages yet</p></div>'; return; }
             container.innerHTML = messages.map(m => `<div class="chat-message ${m.role}"><div class="chat-avatar">${m.role === 'warden' ? '🔒' : '👤'}</div><div>${m.message_type ? `<div class="chat-type">${m.message_type.replace('_', ' ')}</div>` : ''}<div class="chat-bubble">${m.content}</div><div class="chat-time">${new Date(m.created_at).toLocaleString()}</div></div></div>`).join('');
             container.scrollTop = container.scrollHeight;
+
+            // Load chat history count setting
+            const countResult = await api('GET', '/settings/chat-history-count');
+            if (countResult) {
+                document.getElementById('chat-history-count').value = countResult.count;
+            }
+
+            // Load memory
+            await loadMemory();
+        }
+
+        async function loadMemory() {
+            const result = await api('GET', '/settings/memory');
+            if (result) {
+                document.getElementById('llm-memory').value = result.memory || '';
+            }
+        }
+
+        function toggleMemoryPanel() {
+            const panel = document.getElementById('memory-panel');
+            const icon = document.getElementById('memory-toggle-icon');
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                icon.textContent = '▲';
+            } else {
+                panel.style.display = 'none';
+                icon.textContent = '▼';
+            }
+        }
+
+        async function saveMemory() {
+            const memory = document.getElementById('llm-memory').value;
+            const result = await api('PUT', '/settings/memory', { value: memory });
+            if (result) {
+                showToast('Memory saved');
+            }
+        }
+
+        async function clearMemory() {
+            if (!confirm('Clear all of Warden\\'s memory? This cannot be undone.')) return;
+            const result = await api('DELETE', '/settings/memory');
+            if (result) {
+                document.getElementById('llm-memory').value = '';
+                showToast('Memory cleared');
+            }
+        }
+
+        // Agent Intelligence Functions
+        function toggleAgentPanel() {
+            const panel = document.getElementById('agent-panel');
+            const icon = document.getElementById('agent-toggle-icon');
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                icon.textContent = '▲';
+                loadAgentData();
+            } else {
+                panel.style.display = 'none';
+                icon.textContent = '▼';
+            }
+        }
+
+        async function loadAgentData() {
+            // Load intensity
+            const intensityResult = await api('GET', '/settings/agent/intensity');
+            if (intensityResult) {
+                const intensity = intensityResult.intensity || 3;
+                document.getElementById('intensity-slider').value = intensity;
+                updateIntensityLabel(intensity);
+            }
+
+            // Load thinking level
+            const thinkingResult = await api('GET', '/settings/agent/thinking-level');
+            if (thinkingResult) {
+                const level = thinkingResult.thinking_level || 'medium';
+                document.getElementById('thinking-level').value = level;
+                updateThinkingCostLabel(level);
+            }
+
+            // Load mood trend
+            const moodResult = await api('GET', '/settings/agent/mood?days=7');
+            if (moodResult) {
+                const avgMood = moodResult.avg_mood;
+                const avgEnergy = moodResult.avg_energy;
+                document.getElementById('avg-mood-value').textContent = avgMood ? avgMood.toFixed(1) : '--';
+                document.getElementById('avg-energy-value').textContent = avgEnergy ? avgEnergy.toFixed(1) : '--';
+
+                // Set mood icon based on average
+                const moodIcons = ['😢', '😕', '😐', '🙂', '😄'];
+                if (avgMood) {
+                    document.getElementById('avg-mood-icon').textContent = moodIcons[Math.round(avgMood) - 1] || '😐';
+                }
+            }
+
+            // Load follow-ups
+            const followupsResult = await api('GET', '/settings/agent/followups');
+            if (followupsResult && followupsResult.followups) {
+                const container = document.getElementById('followups-list');
+                if (followupsResult.followups.length === 0) {
+                    container.innerHTML = '<div class="empty-state" style="padding: 16px; font-size: 13px;">No scheduled follow-ups</div>';
+                } else {
+                    container.innerHTML = followupsResult.followups.map(f => {
+                        const scheduledDate = new Date(f.scheduled_time);
+                        const dateStr = scheduledDate.toLocaleDateString();
+                        const timeStr = scheduledDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        return `
+                            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px;">
+                                <div>
+                                    <div style="font-weight: 500;">${f.topic}</div>
+                                    <div style="font-size: 12px; color: var(--text-muted);">📅 ${dateStr} ${timeStr}</div>
+                                </div>
+                                <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="cancelFollowup(${f.id})">Cancel</button>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            }
+        }
+
+        function updateIntensityLabel(value) {
+            const labels = {1: 'Gentle (1)', 2: 'Supportive (2)', 3: 'Balanced (3)', 4: 'Firm (4)', 5: 'Intense (5)'};
+            document.getElementById('intensity-label').textContent = labels[value] || 'Balanced (3)';
+        }
+
+        async function updateIntensity(value) {
+            updateIntensityLabel(value);
+            const result = await api('PUT', `/settings/agent/intensity?intensity=${value}`);
+            if (result) {
+                showToast(`Intensity set to ${value}`);
+            }
+        }
+
+        function updateThinkingCostLabel(level) {
+            const costs = {
+                'off': '💨 Fastest, cheapest',
+                'minimal': '💰 Very low cost',
+                'low': '💰 Low cost',
+                'medium': '💰💰 Moderate cost',
+                'high': '💰💰💰 Higher cost, best reasoning'
+            };
+            document.getElementById('thinking-cost').textContent = costs[level] || '💰💰 Moderate cost';
+        }
+
+        async function updateThinkingLevel(level) {
+            updateThinkingCostLabel(level);
+            const result = await api('PUT', `/settings/agent/thinking-level?level=${level}`);
+            if (result) {
+                showToast(`Thinking level set to ${level}`);
+            }
+        }
+
+        async function cancelFollowup(id) {
+            if (!confirm('Cancel this follow-up?')) return;
+            const result = await api('DELETE', `/settings/agent/followups/${id}`);
+            if (result) {
+                showToast('Follow-up cancelled');
+                loadAgentData();
+            }
+        }
+
+        async function updateChatHistoryCount(count) {
+            const result = await api('PUT', `/settings/chat-history-count?count=${count}`);
+            if (result) {
+                showToast(`LLM will now see last ${count} messages`);
+            }
         }
 
         async function loadCommitments() {

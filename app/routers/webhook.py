@@ -119,11 +119,13 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
 
     Returns (handled: bool, reply: str | None)
     """
+    import json as json_module
+
     # Look for pending commitment parses
     result = await db.execute(
         select(PendingCommitmentParse).where(
             and_(
-                PendingCommitmentParse.status == "pending",
+                PendingCommitmentParse.status.in_(["pending", "breakdown_pending"]),
                 PendingCommitmentParse.expires_at > datetime.utcnow(),
             )
         ).order_by(PendingCommitmentParse.created_at.desc()).limit(1)
@@ -135,6 +137,49 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
 
     text_lower = message_text.lower().strip()
 
+    # Check for breakdown request (for large commitments)
+    breakdown_phrases = ["break it down", "break it up", "smaller pieces", "break down", "split it", "decompose"]
+    if pending.is_large and pending.suggested_breakdown and any(phrase in text_lower for phrase in breakdown_phrases):
+        # Parse the breakdown suggestions
+        try:
+            breakdown_steps = json_module.loads(pending.suggested_breakdown)
+        except:
+            breakdown_steps = []
+
+        if breakdown_steps:
+            # Create sub-commitments for each step
+            base_due = pending.parsed_due_date
+            created_titles = []
+
+            for i, step in enumerate(breakdown_steps):
+                # Spread deadlines if there's a due date
+                step_due = None
+                if base_due and len(breakdown_steps) > 1:
+                    # Distribute evenly before the main deadline
+                    days_before = (len(breakdown_steps) - i) * 1  # 1 day per step
+                    step_due = base_due - timedelta(days=days_before)
+                    if step_due < datetime.utcnow():
+                        step_due = datetime.utcnow() + timedelta(hours=i+1)  # At least stagger by hour
+
+                commitment = Commitment(
+                    title=step,
+                    description=f"Part of: {pending.parsed_title}",
+                    due_date=step_due,
+                    status=CommitmentStatus.PENDING,  # Explicitly set status
+                )
+                db.add(commitment)
+                created_titles.append(step)
+
+            pending.status = "confirmed"
+            await db.commit()  # Commit immediately to persist
+            logger.info(f"Created {len(created_titles)} breakdown commitments for: {pending.parsed_title}")
+
+            titles_str = "\n".join(f"• {t}" for t in created_titles)
+            return True, f"Done. I've broken \"{pending.parsed_title}\" into {len(created_titles)} steps:\n{titles_str}\n\nI'll track each one. Start with the first."
+
+        # Fallback if no breakdown available
+        return True, "I suggested breaking it down but don't have specific steps. Want to tell me how you'd split it?"
+
     # Check for confirmation
     if text_lower in ["yes", "y", "confirm", "correct", "yep", "yeah", "sure", "ok", "okay"]:
         # Create the commitment
@@ -143,12 +188,14 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
             title=pending.parsed_title,
             description=pending.parsed_description,
             due_date=due_date,
+            status=CommitmentStatus.PENDING,  # Explicitly set status
         )
         db.add(commitment)
 
         # Mark pending as confirmed
         pending.status = "confirmed"
-        await db.flush()
+        await db.commit()  # Commit immediately to persist
+        logger.info(f"Created commitment: {pending.parsed_title} (id={commitment.id})")
 
         if due_date:
             due_str = due_date.strftime('%A, %b %d')
@@ -202,11 +249,19 @@ async def try_parse_commitment(db, message_text: str, context: dict) -> tuple[bo
         except ValueError:
             pass
 
+    # Store breakdown info if this is a large commitment
+    breakdown_json = None
+    if parsed.get("is_large") and parsed.get("suggested_breakdown"):
+        import json as json_module
+        breakdown_json = json_module.dumps(parsed["suggested_breakdown"])
+
     pending = PendingCommitmentParse(
         original_message=message_text,
         parsed_title=parsed["title"],
         parsed_due_date=due_datetime,
         parsed_description=parsed.get("description"),
+        suggested_breakdown=breakdown_json,
+        is_large=parsed.get("is_large", False),
         expires_at=datetime.utcnow() + timedelta(hours=1),
     )
     db.add(pending)
@@ -343,6 +398,88 @@ async def telegram_webhook(request: Request):
 
             # Analyze the response using LLM (with chat history)
             analysis = await analyze_response(message_text, context, chat_history)
+
+            # Process memory update if provided
+            memory_update = analysis.get("memory_update")
+            if memory_update and isinstance(memory_update, str) and memory_update.strip():
+                # Save memory update to database
+                memory_result = await db.execute(
+                    select(Settings).where(Settings.key == "llm_memory")
+                )
+                memory_setting = memory_result.scalar_one_or_none()
+                if memory_setting:
+                    memory_setting.value = memory_update.strip()
+                else:
+                    db.add(Settings(key="llm_memory", value=memory_update.strip()))
+                logger.info("LLM memory updated")
+
+            # Process scheduled follow-up if provided
+            followup = analysis.get("schedule_followup")
+            if followup and isinstance(followup, dict) and followup.get("topic"):
+                # Parse the "when" field into a datetime
+                import pytz
+                tz = pytz.timezone("America/Phoenix")
+                now = datetime.now(tz)
+                when_str = followup.get("when", "tomorrow").lower()
+
+                # Simple parsing for common patterns
+                scheduled_time = now + timedelta(days=1)  # Default to tomorrow
+                scheduled_time = scheduled_time.replace(hour=10, minute=0, second=0, microsecond=0)
+
+                if "tonight" in when_str or "this evening" in when_str:
+                    scheduled_time = now.replace(hour=19, minute=0, second=0, microsecond=0)
+                    if scheduled_time <= now:
+                        scheduled_time += timedelta(days=1)
+                elif "tomorrow morning" in when_str:
+                    scheduled_time = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+                elif "tomorrow evening" in when_str or "tomorrow night" in when_str:
+                    scheduled_time = (now + timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
+                elif "in 2 days" in when_str or "in two days" in when_str:
+                    scheduled_time = (now + timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0)
+                elif "next week" in when_str:
+                    scheduled_time = (now + timedelta(days=7)).replace(hour=10, minute=0, second=0, microsecond=0)
+                elif "in a few hours" in when_str or "later today" in when_str:
+                    scheduled_time = now + timedelta(hours=3)
+
+                # Convert to UTC for storage
+                scheduled_time_utc = scheduled_time.astimezone(pytz.UTC).replace(tzinfo=None)
+
+                db.add(ScheduledFollowup(
+                    topic=followup["topic"],
+                    reason=followup.get("reason"),
+                    scheduled_time=scheduled_time_utc,
+                ))
+                logger.info(f"Scheduled follow-up on '{followup['topic']}' for {scheduled_time}")
+
+            # Process mood assessment if provided
+            mood = analysis.get("mood_assessment")
+            if mood and isinstance(mood, dict):
+                mood_score = mood.get("mood_score")
+                energy_level = mood.get("energy_level")
+                if mood_score or energy_level:
+                    db.add(MoodLog(
+                        mood_score=mood_score,
+                        energy_level=energy_level,
+                        detected_from="llm_analysis",
+                        notes=mood.get("notes"),
+                    ))
+                    logger.info(f"Logged mood: score={mood_score}, energy={energy_level}")
+
+            # Process intensity adjustment if suggested
+            suggested_intensity = analysis.get("suggested_intensity")
+            if suggested_intensity and isinstance(suggested_intensity, int) and 1 <= suggested_intensity <= 5:
+                intensity_result = await db.execute(
+                    select(Settings).where(Settings.key == "accountability_intensity")
+                )
+                intensity_setting = intensity_result.scalar_one_or_none()
+                if intensity_setting:
+                    current = int(intensity_setting.value)
+                    if current != suggested_intensity:
+                        intensity_setting.value = str(suggested_intensity)
+                        logger.info(f"Adjusted accountability intensity: {current} -> {suggested_intensity}")
+                else:
+                    db.add(Settings(key="accountability_intensity", value=str(suggested_intensity)))
+                    logger.info(f"Set accountability intensity to {suggested_intensity}")
 
             # Create response record
             response = Response(

@@ -6,15 +6,14 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db_models import Settings
+from app.db_models import Settings, CheckInSchedule
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 config = get_settings()
 
-# Hardcoded Google Calendar credentials (for persistence across deploys)
-GCAL_CLIENT_ID = "REDACTED"
-GCAL_CLIENT_SECRET = "REDACTED"
+# Google Calendar credentials from environment variables only (no hardcoding for security)
+# User can configure these in the dashboard Settings page
 
 
 async def init_calendar_credentials(db: AsyncSession, base_url: str = None) -> bool:
@@ -40,9 +39,9 @@ async def init_calendar_credentials(db: AsyncSession, base_url: str = None) -> b
                 logger.info("Google Calendar has credentials but needs authorization")
                 return False
 
-        # Set up initial credentials from hardcoded values or env vars
-        client_id = config.gcal_client_id or GCAL_CLIENT_ID
-        client_secret = config.gcal_client_secret or GCAL_CLIENT_SECRET
+        # Set up initial credentials from env vars only
+        client_id = config.gcal_client_id
+        client_secret = config.gcal_client_secret
 
         if not client_id or not client_secret:
             logger.info("No Google Calendar credentials configured")
@@ -135,6 +134,47 @@ async def init_telegram_webhook(base_url: str) -> bool:
         return False
 
 
+async def init_default_schedules(db: AsyncSession) -> None:
+    """Initialize default check-in schedules if none exist."""
+    try:
+        # Check if any schedules exist
+        result = await db.execute(select(CheckInSchedule))
+        existing = result.scalars().all()
+
+        if existing:
+            logger.info(f"Found {len(existing)} existing check-in schedules")
+            return
+
+        # No schedules exist - create defaults
+        default_schedules = [
+            CheckInSchedule(
+                name="Morning Check-in",
+                check_in_type="daily_checkin",
+                hour=4,
+                minute=15,
+                days_of_week="mon,tue,wed,thu,fri",
+                is_active=True,
+            ),
+            CheckInSchedule(
+                name="Weekly Review",
+                check_in_type="weekly_review",
+                hour=19,
+                minute=0,
+                days_of_week="sun",
+                is_active=True,
+            ),
+        ]
+
+        for schedule in default_schedules:
+            db.add(schedule)
+
+        await db.flush()
+        logger.info(f"Created {len(default_schedules)} default check-in schedules")
+
+    except Exception as e:
+        logger.error(f"Failed to initialize default schedules: {e}")
+
+
 async def initialize_all(db: AsyncSession, base_url: str = None) -> dict:
     """Initialize all persistent settings.
 
@@ -144,6 +184,7 @@ async def initialize_all(db: AsyncSession, base_url: str = None) -> dict:
         "system_prompt": False,
         "calendar": False,
         "telegram_webhook": False,
+        "schedules": False,
     }
 
     # Initialize system prompt
@@ -152,6 +193,10 @@ async def initialize_all(db: AsyncSession, base_url: str = None) -> dict:
 
     # Initialize calendar credentials
     results["calendar"] = await init_calendar_credentials(db, base_url)
+
+    # Initialize default check-in schedules
+    await init_default_schedules(db)
+    results["schedules"] = True
 
     # Initialize Telegram webhook (if base_url provided)
     if base_url:
