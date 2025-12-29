@@ -287,3 +287,31 @@ class ErrorLog(Base):
     resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ResponseTiming(Base):
+    """Track response timing patterns for personalized thresholds."""
+
+    __tablename__ = "response_timings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    check_in_id = Column(Integer, ForeignKey("checkins.id"), nullable=True)
+    response_time_minutes = Column(Integer, nullable=True)  # Time to respond in minutes
+    did_respond = Column(Boolean, default=False)
+    day_of_week = Column(Integer, nullable=True)  # 0=Monday, 6=Sunday
+    hour_of_day = Column(Integer, nullable=True)  # 0-23
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class WeeklyInsight(Base):
+    """Store weekly insights and metrics summaries."""
+
+    __tablename__ = "weekly_insights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    week_start = Column(DateTime, nullable=False)
+    week_end = Column(DateTime, nullable=False)
+    summary = Column(Text, nullable=True)  # LLM-generated summary
+    metrics = Column(Text, nullable=True)  # JSON with metrics data
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

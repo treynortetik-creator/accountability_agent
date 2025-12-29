@@ -1,5 +1,6 @@
 """Scheduled jobs for The Warden using APScheduler."""
 
+import json
 import logging
 from datetime import datetime, timedelta
 import pytz
@@ -19,6 +20,11 @@ from app.db_models import (
     Pattern,
     ChatMessage,
     CheckInSchedule,
+    Settings,
+    ScheduledFollowup,
+    MoodLog,
+    ResponseTiming,
+    WeeklyInsight,
 )
 from app.telegram_bot import telegram_service
 from app.llm import generate_message
