@@ -25,6 +25,7 @@ from app.db_models import (
     MoodLog,
     ResponseTiming,
     WeeklyInsight,
+    ErrorLog,
 )
 from app.telegram_bot import telegram_service
 from app.llm import generate_message
@@ -34,6 +35,25 @@ from app.calendar_service import calendar_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+async def log_scheduler_error(job_name: str, error: Exception):
+    """Log a scheduler error to the database for UI visibility."""
+    import traceback
+    try:
+        async with async_session_maker() as db:
+            error_log = ErrorLog(
+                error_type=type(error).__name__,
+                error_message=str(error),
+                stack_trace=traceback.format_exc(),
+                context=json.dumps({"job_name": job_name}),
+                source="scheduler",
+            )
+            db.add(error_log)
+            await db.commit()
+            logger.info(f"Scheduler error logged to database for job: {job_name}")
+    except Exception as log_error:
+        logger.error(f"Failed to log scheduler error to database: {log_error}")
 
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
@@ -246,8 +266,9 @@ async def daily_checkin_job():
             logger.info("Daily check-in sent successfully")
 
         except Exception as e:
-            logger.error(f"Daily check-in failed: {e}")
+            logger.error(f"Daily check-in failed: {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error("daily_checkin", e)
 
 
 async def weekly_review_job():
@@ -328,8 +349,9 @@ async def weekly_review_job():
             logger.info("Weekly review sent successfully")
 
         except Exception as e:
-            logger.error(f"Weekly review failed: {e}")
+            logger.error(f"Weekly review failed: {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error("weekly_review", e)
 
 
 async def silence_detector_job():
@@ -429,8 +451,9 @@ async def silence_detector_job():
             logger.info(f"Escalation sent after {hours_since:.1f} hours of silence")
 
         except Exception as e:
-            logger.error(f"Silence detector failed: {e}")
+            logger.error(f"Silence detector failed: {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error("silence_detector", e)
 
 
 async def commitment_reminder_job():
@@ -513,8 +536,9 @@ async def commitment_reminder_job():
             await db.commit()
 
         except Exception as e:
-            logger.error(f"Commitment reminder failed: {e}")
+            logger.error(f"Commitment reminder failed: {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error("commitment_reminder", e)
 
 
 async def deadline_alert_job():
@@ -589,8 +613,9 @@ async def deadline_alert_job():
             logger.info(f"Processed {len(upcoming)} upcoming deadlines")
 
         except Exception as e:
-            logger.error(f"Deadline alert failed: {e}")
+            logger.error(f"Deadline alert failed: {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error("deadline_alert", e)
 
 
 async def scheduled_followup_job():
@@ -651,6 +676,7 @@ async def scheduled_followup_job():
         except Exception as e:
             logger.error(f"Follow-up job failed: {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error("scheduled_followup", e)
 
 
 async def weekly_insights_job():
@@ -775,6 +801,7 @@ async def weekly_insights_job():
         except Exception as e:
             logger.error(f"Weekly insights job failed: {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error("weekly_insights", e)
 
 
 def setup_scheduler():
@@ -910,29 +937,27 @@ async def custom_schedule_job(schedule_id: int, schedule_name: str, prompt_templ
             message = await generate_message(
                 "daily_checkin",
                 context,
-                custom_prompt=prompt_template
+                custom_instruction=prompt_template
             )
 
             if message:
                 # Send via Telegram
-                message_id = await telegram_service.send_message(
-                    message,
-                    message_type="check_in"
-                )
+                msg_id = await telegram_service.send_message(message)
 
                 # Record the check-in
                 checkin = CheckIn(
-                    type=CheckInType.DAILY,
-                    message=message,
-                    telegram_message_id=message_id,
+                    check_in_type=CheckInType.DAILY,
+                    message_sent=message,
+                    telegram_message_id=msg_id,
                 )
                 db.add(checkin)
 
                 # Record in chat history
                 chat_msg = ChatMessage(
-                    sender="warden",
-                    message=message,
-                    message_type="check_in",
+                    role="warden",
+                    content=message,
+                    message_type="custom_checkin",
+                    telegram_message_id=msg_id,
                 )
                 db.add(chat_msg)
 
@@ -942,8 +967,9 @@ async def custom_schedule_job(schedule_id: int, schedule_name: str, prompt_templ
                 logger.warning(f"Custom schedule '{schedule_name}' generated no message")
 
         except Exception as e:
-            logger.error(f"Error executing custom schedule '{schedule_name}': {e}")
+            logger.error(f"Error executing custom schedule '{schedule_name}': {e}", exc_info=True)
             await db.rollback()
+            await log_scheduler_error(f"custom_schedule_{schedule_name}", e)
 
 
 async def load_custom_schedules_on_startup():

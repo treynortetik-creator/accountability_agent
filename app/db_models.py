@@ -254,7 +254,7 @@ class ScheduledFollowup(Base):
     topic = Column(String(255), nullable=False)
     reason = Column(Text, nullable=True)
     scheduled_time = Column(DateTime, nullable=False)
-    sent = Column(Boolean, default=False)
+    status = Column(String(20), default="pending")  # pending, sent, cancelled
     sent_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
