@@ -1506,6 +1506,10 @@ DASHBOARD_HTML = """
                 document.getElementById('weekly-hour').value = schedule.weekly_review_hour;
                 document.getElementById('weekly-minute').value = schedule.weekly_review_minute;
             }
+
+            // Load custom schedules and prompts
+            loadSchedules();
+            loadPrompts();
         }
 
         async function saveSchedule() {
