@@ -14,12 +14,13 @@ from httpx import AsyncClient, ASGITransport
 # Add the parent directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Set test environment
+# Set test environment BEFORE importing app modules
 os.environ["TESTING"] = "true"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["TELEGRAM_BOT_TOKEN"] = "test_token"
 os.environ["TELEGRAM_CHAT_ID"] = "test_chat_id"
 os.environ["OPENROUTER_API_KEY"] = "test_key"
+os.environ["API_KEY"] = "test_api_key"  # Match the auth header we'll send
 
 
 @pytest.fixture(scope="session")
@@ -67,6 +68,10 @@ async def test_db(test_engine):
 @pytest_asyncio.fixture
 async def app():
     """Create test FastAPI app instance."""
+    # Clear the settings cache to pick up test env vars
+    from app.config import get_settings
+    get_settings.cache_clear()
+
     from app.main import app as fastapi_app
     from app.database import engine
     from app.db_models import Base
@@ -77,6 +82,9 @@ async def app():
 
     yield fastapi_app
 
+    # Clear cache after tests
+    get_settings.cache_clear()
+
 
 @pytest_asyncio.fixture
 async def client(app):
@@ -84,6 +92,6 @@ async def client(app):
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-API-Key": "test_key"}
+        headers={"X-API-Key": "test_api_key"}  # Match API_KEY env var
     ) as client:
         yield client
