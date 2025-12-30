@@ -325,7 +325,8 @@ async def telegram_webhook(request: Request):
             handled, reply = await handle_pending_confirmation(db, message_text)
             if handled:
                 if reply:
-                    msg_id = await telegram_service.send_message(reply)
+                    # Always respond to user messages, even during quiet hours
+                    msg_id = await telegram_service.send_message(reply, ignore_quiet_hours=True)
                     warden_chat_msg = ChatMessage(
                         role="warden",
                         content=reply,
@@ -344,7 +345,8 @@ async def telegram_webhook(request: Request):
             parsed_commitment, commit_reply = await try_parse_commitment(db, message_text, context)
             if parsed_commitment:
                 if commit_reply:
-                    msg_id = await telegram_service.send_message(commit_reply)
+                    # Always respond to user messages, even during quiet hours
+                    msg_id = await telegram_service.send_message(commit_reply, ignore_quiet_hours=True)
                     warden_chat_msg = ChatMessage(
                         role="warden",
                         content=commit_reply,
@@ -505,7 +507,8 @@ async def telegram_webhook(request: Request):
                 reply = "Got it. What's next on the list?"
                 logger.warning("LLM returned no reply, using fallback")
 
-            msg_id = await telegram_service.send_message(reply)
+            # Always respond to user messages, even during quiet hours
+            msg_id = await telegram_service.send_message(reply, ignore_quiet_hours=True)
             # Save warden reply to chat history
             warden_chat_msg = ChatMessage(
                 role="warden",
@@ -551,7 +554,8 @@ async def telegram_webhook(request: Request):
             # Try to send an error acknowledgment to the user
             try:
                 error_reply = "Message received. Had a hiccup processing it, but I've got it logged."
-                msg_id = await telegram_service.send_message(error_reply)
+                # Always respond to user messages, even during quiet hours
+                msg_id = await telegram_service.send_message(error_reply, ignore_quiet_hours=True)
                 # Save the error reply in a new transaction
                 async with async_session_maker() as error_db:
                     error_chat_msg = ChatMessage(

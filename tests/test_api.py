@@ -195,3 +195,52 @@ class TestAgentSettings:
         data = response.json()
         assert "followups" in data
         assert isinstance(data["followups"], list)
+
+
+class TestQuietHours:
+    """Test quiet hours endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_get_quiet_hours(self, client):
+        """Test getting quiet hours settings."""
+        response = await client.get("/api/settings/quiet-hours")
+        assert response.status_code == 200
+        data = response.json()
+        assert "enabled" in data
+        assert "start_hour" in data
+        assert "start_minute" in data
+        assert "end_hour" in data
+        assert "end_minute" in data
+        assert "currently_quiet" in data
+
+    @pytest.mark.asyncio
+    async def test_update_quiet_hours(self, client):
+        """Test updating quiet hours settings."""
+        response = await client.put(
+            "/api/settings/quiet-hours?enabled=true&start_hour=22&start_minute=0&end_hour=6&end_minute=30"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data["enabled"] is True
+        assert data["start_hour"] == 22
+
+    @pytest.mark.asyncio
+    async def test_update_quiet_hours_invalid(self, client):
+        """Test updating quiet hours with invalid values."""
+        response = await client.put(
+            "/api/settings/quiet-hours?enabled=true&start_hour=25&start_minute=0&end_hour=6&end_minute=0"
+        )
+        assert response.status_code == 400
+
+
+class TestScheduleEdit:
+    """Test schedule edit endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_get_schedules(self, client):
+        """Test getting schedules list."""
+        response = await client.get("/api/settings/schedules")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)

@@ -804,7 +804,7 @@ DASHBOARD_HTML = """
                     </p>
                     <div id="schedules-list"><div class="empty-state">Loading schedules...</div></div>
                     <div id="add-schedule-form" style="display: none; margin-top: 16px; padding: 16px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <h4 style="margin-bottom: 12px;">Add New Schedule</h4>
+                        <h4 id="schedule-form-title" style="margin-bottom: 12px;">Add New Schedule</h4>
                         <div class="grid-2" style="margin-bottom: 12px;">
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label class="form-label">Name</label>
@@ -834,8 +834,35 @@ DASHBOARD_HTML = """
                             <textarea id="sched-prompt" class="form-textarea" style="min-height: 80px;" placeholder="Custom instructions for this check-in..."></textarea>
                         </div>
                         <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+                            <button id="schedule-save-btn" class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
                             <button class="btn btn-secondary" onclick="hideAddScheduleForm()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quiet Hours Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">🌙 Quiet Hours</h3>
+                    </div>
+                    <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+                        During quiet hours, The Warden won't send scheduled messages. Replies to your messages are still allowed.
+                    </p>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="quiet-hours-enabled" onchange="updateQuietHours()" />
+                            <span>Enable Quiet Hours</span>
+                            <span id="quiet-status" class="badge badge-pending" style="margin-left: 8px;"></span>
+                        </label>
+                    </div>
+                    <div class="grid-2" style="margin-top: 12px;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label">Start Time (no messages after)</label>
+                            <input type="time" id="quiet-start" class="form-input" value="19:30" onchange="updateQuietHours()" />
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label">End Time (messages resume)</label>
+                            <input type="time" id="quiet-end" class="form-input" value="04:00" onchange="updateQuietHours()" />
                         </div>
                     </div>
                 </div>
@@ -1560,6 +1587,7 @@ DASHBOARD_HTML = """
             // Load custom schedules and prompts
             loadSchedules();
             loadPrompts();
+            loadQuietHours();
         }
 
         async function saveSchedule() {
@@ -1639,6 +1667,64 @@ DASHBOARD_HTML = """
                 showToast('Calendar disconnected');
                 document.getElementById('auth-code-section').style.display = 'none';
                 loadSettings();
+            }
+        }
+
+        // Quiet Hours Functions
+        async function loadQuietHours() {
+            const result = await api('GET', '/settings/quiet-hours');
+            if (result) {
+                document.getElementById('quiet-hours-enabled').checked = result.enabled;
+
+                // Format times for input (HH:MM)
+                const startHour = String(result.start_hour).padStart(2, '0');
+                const startMin = String(result.start_minute).padStart(2, '0');
+                const endHour = String(result.end_hour).padStart(2, '0');
+                const endMin = String(result.end_minute).padStart(2, '0');
+
+                document.getElementById('quiet-start').value = `${startHour}:${startMin}`;
+                document.getElementById('quiet-end').value = `${endHour}:${endMin}`;
+
+                // Update status badge
+                const statusBadge = document.getElementById('quiet-status');
+                if (result.currently_quiet) {
+                    statusBadge.textContent = 'Active Now';
+                    statusBadge.className = 'badge badge-completed';
+                } else if (result.enabled) {
+                    statusBadge.textContent = 'Enabled';
+                    statusBadge.className = 'badge badge-pending';
+                } else {
+                    statusBadge.textContent = 'Disabled';
+                    statusBadge.className = 'badge badge-overdue';
+                }
+            }
+        }
+
+        async function updateQuietHours() {
+            const enabled = document.getElementById('quiet-hours-enabled').checked;
+            const startTime = document.getElementById('quiet-start').value;
+            const endTime = document.getElementById('quiet-end').value;
+
+            if (!startTime || !endTime) return;
+
+            const [startHour, startMin] = startTime.split(':').map(Number);
+            const [endHour, endMin] = endTime.split(':').map(Number);
+
+            const params = new URLSearchParams({
+                enabled: enabled,
+                start_hour: startHour,
+                start_minute: startMin,
+                end_hour: endHour,
+                end_minute: endMin
+            });
+
+            const result = await api('PUT', `/settings/quiet-hours?${params.toString()}`);
+
+            if (result) {
+                showToast('Quiet hours updated');
+                loadQuietHours();  // Refresh to show current status
+            } else {
+                showToast('Failed to update quiet hours', 'error');
             }
         }
 
@@ -1779,6 +1865,7 @@ DASHBOARD_HTML = """
                         ${s.prompt_template ? '<div class="list-item-meta" style="font-style: italic; margin-top: 4px;">Custom prompt configured</div>' : ''}
                     </div>
                     <div class="list-item-actions">
+                        <button class="btn btn-sm btn-primary" onclick="editSchedule(${s.id}, '${s.name}', ${s.hour}, ${s.minute}, '${s.days_of_week || ''}', '${s.check_in_type}', \`${(s.prompt_template || '').replace(/`/g, '\\`')}\`)">Edit</button>
                         <button class="btn btn-sm btn-secondary" onclick="toggleSchedule(${s.id}, ${!s.is_active})">${s.is_active ? 'Pause' : 'Enable'}</button>
                         <button class="btn btn-sm btn-danger" onclick="deleteSchedule(${s.id})">🗑️</button>
                     </div>
@@ -1786,16 +1873,36 @@ DASHBOARD_HTML = """
             }).join('');
         }
 
+        let editingScheduleId = null;
+
         function showAddScheduleForm() {
+            editingScheduleId = null;
+            document.getElementById('schedule-form-title').textContent = 'Add New Schedule';
+            document.getElementById('schedule-save-btn').textContent = 'Save Schedule';
+            document.getElementById('add-schedule-form').style.display = 'block';
+        }
+
+        function editSchedule(id, name, hour, minute, days, type, prompt) {
+            editingScheduleId = id;
+            document.getElementById('schedule-form-title').textContent = 'Edit Schedule';
+            document.getElementById('schedule-save-btn').textContent = 'Update Schedule';
+            document.getElementById('sched-name').value = name;
+            document.getElementById('sched-time').value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+            document.getElementById('sched-days').value = days || '';
+            document.getElementById('sched-type').value = type;
+            document.getElementById('sched-prompt').value = prompt || '';
             document.getElementById('add-schedule-form').style.display = 'block';
         }
 
         function hideAddScheduleForm() {
+            editingScheduleId = null;
             document.getElementById('add-schedule-form').style.display = 'none';
             document.getElementById('sched-name').value = '';
             document.getElementById('sched-time').value = '09:00';
             document.getElementById('sched-days').value = '';
             document.getElementById('sched-prompt').value = '';
+            document.getElementById('schedule-form-title').textContent = 'Add New Schedule';
+            document.getElementById('schedule-save-btn').textContent = 'Save Schedule';
         }
 
         async function saveSchedule() {
@@ -1810,20 +1917,38 @@ DASHBOARD_HTML = """
 
             const [hour, minute] = time.split(':').map(Number);
 
-            const result = await api('POST', '/settings/schedules', {
-                name: name,
-                check_in_type: type,
-                hour: hour,
-                minute: minute,
-                days_of_week: days,
-                prompt_template: prompt,
-                is_active: true
-            });
+            if (editingScheduleId) {
+                // Update existing schedule
+                const result = await api('PUT', `/settings/schedules/${editingScheduleId}`, {
+                    name: name,
+                    hour: hour,
+                    minute: minute,
+                    days_of_week: days,
+                    prompt_template: prompt
+                });
 
-            if (result) {
-                showToast('Schedule created');
-                hideAddScheduleForm();
-                loadSchedules();
+                if (result) {
+                    showToast('Schedule updated');
+                    hideAddScheduleForm();
+                    loadSchedules();
+                }
+            } else {
+                // Create new schedule
+                const result = await api('POST', '/settings/schedules', {
+                    name: name,
+                    check_in_type: type,
+                    hour: hour,
+                    minute: minute,
+                    days_of_week: days,
+                    prompt_template: prompt,
+                    is_active: true
+                });
+
+                if (result) {
+                    showToast('Schedule created');
+                    hideAddScheduleForm();
+                    loadSchedules();
+                }
             }
         }
 

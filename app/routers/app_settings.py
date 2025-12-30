@@ -514,6 +514,12 @@ async def update_schedule(
     _: str = Depends(verify_api_key),
 ):
     """Update a check-in schedule."""
+    # Validate hour/minute if provided
+    if update.hour is not None and (update.hour < 0 or update.hour > 23):
+        raise HTTPException(status_code=400, detail="Hour must be 0-23")
+    if update.minute is not None and (update.minute < 0 or update.minute > 59):
+        raise HTTPException(status_code=400, detail="Minute must be 0-59")
+
     result = await db.execute(
         select(CheckInSchedule).where(CheckInSchedule.id == schedule_id)
     )
@@ -872,3 +878,78 @@ async def cancel_followup(
     await db.commit()
 
     return {"status": "cancelled", "id": followup_id}
+
+
+# ============== Quiet Hours ==============
+
+@router.get("/quiet-hours")
+async def get_quiet_hours(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get quiet hours settings."""
+    from app.config import get_settings
+    from app.telegram_bot import is_quiet_hours
+    settings = get_settings()
+
+    # Check if we have database overrides
+    enabled = await get_setting(db, "quiet_hours_enabled", str(settings.quiet_hours_enabled))
+    start_hour = await get_setting(db, "quiet_hours_start_hour", str(settings.quiet_hours_start_hour))
+    start_minute = await get_setting(db, "quiet_hours_start_minute", str(settings.quiet_hours_start_minute))
+    end_hour = await get_setting(db, "quiet_hours_end_hour", str(settings.quiet_hours_end_hour))
+    end_minute = await get_setting(db, "quiet_hours_end_minute", str(settings.quiet_hours_end_minute))
+
+    return {
+        "enabled": enabled.lower() == "true",
+        "start_hour": int(start_hour),
+        "start_minute": int(start_minute),
+        "end_hour": int(end_hour),
+        "end_minute": int(end_minute),
+        "currently_quiet": is_quiet_hours(),
+    }
+
+
+@router.put("/quiet-hours")
+async def update_quiet_hours(
+    enabled: Optional[bool] = None,
+    start_hour: Optional[int] = None,
+    start_minute: Optional[int] = None,
+    end_hour: Optional[int] = None,
+    end_minute: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update quiet hours settings."""
+    # Validate hour/minute ranges
+    if start_hour is not None and (start_hour < 0 or start_hour > 23):
+        raise HTTPException(status_code=400, detail="Start hour must be 0-23")
+    if end_hour is not None and (end_hour < 0 or end_hour > 23):
+        raise HTTPException(status_code=400, detail="End hour must be 0-23")
+    if start_minute is not None and (start_minute < 0 or start_minute > 59):
+        raise HTTPException(status_code=400, detail="Start minute must be 0-59")
+    if end_minute is not None and (end_minute < 0 or end_minute > 59):
+        raise HTTPException(status_code=400, detail="End minute must be 0-59")
+
+    # Update each setting if provided
+    if enabled is not None:
+        await set_setting(db, "quiet_hours_enabled", str(enabled).lower())
+    if start_hour is not None:
+        await set_setting(db, "quiet_hours_start_hour", str(start_hour))
+    if start_minute is not None:
+        await set_setting(db, "quiet_hours_start_minute", str(start_minute))
+    if end_hour is not None:
+        await set_setting(db, "quiet_hours_end_hour", str(end_hour))
+    if end_minute is not None:
+        await set_setting(db, "quiet_hours_end_minute", str(end_minute))
+
+    await db.commit()
+
+    # Return updated values
+    return {
+        "status": "updated",
+        "enabled": enabled if enabled is not None else None,
+        "start_hour": start_hour if start_hour is not None else None,
+        "start_minute": start_minute if start_minute is not None else None,
+        "end_hour": end_hour if end_hour is not None else None,
+        "end_minute": end_minute if end_minute is not None else None,
+    }

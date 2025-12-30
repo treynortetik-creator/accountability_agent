@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     silence_threshold_hours: int = 18
     deadline_alert_hours: int = 48
 
+    # Quiet hours (no messages during this window)
+    quiet_hours_enabled: bool = True
+    quiet_hours_start_hour: int = 19  # 7:00 PM
+    quiet_hours_start_minute: int = 30  # 7:30 PM
+    quiet_hours_end_hour: int = 4  # 4:00 AM
+    quiet_hours_end_minute: int = 0
+
     # Google Calendar (optional - for persistent config)
     gcal_client_id: str = ""
     gcal_client_secret: str = ""
