@@ -5,12 +5,16 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select, and_
 from app.database import async_session_maker
-from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus, Settings, ScheduledFollowup, MoodLog, ErrorLog
+from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus, Settings as SettingsModel, ScheduledFollowup, MoodLog, ErrorLog
 from app.telegram_bot import parse_telegram_update, telegram_service
 from app.llm import analyze_response, parse_commitment
 from app.scheduler import get_context
 from app.streaks import update_response_streak
+from app.config import get_settings
 import re
+import pytz
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 
@@ -405,20 +409,19 @@ async def telegram_webhook(request: Request):
             if memory_update and isinstance(memory_update, str) and memory_update.strip():
                 # Save memory update to database
                 memory_result = await db.execute(
-                    select(Settings).where(Settings.key == "llm_memory")
+                    select(SettingsModel).where(SettingsModel.key == "llm_memory")
                 )
                 memory_setting = memory_result.scalar_one_or_none()
                 if memory_setting:
                     memory_setting.value = memory_update.strip()
                 else:
-                    db.add(Settings(key="llm_memory", value=memory_update.strip()))
+                    db.add(SettingsModel(key="llm_memory", value=memory_update.strip()))
                 logger.info("LLM memory updated")
 
             # Process scheduled follow-up if provided
             followup = analysis.get("schedule_followup")
             if followup and isinstance(followup, dict) and followup.get("topic"):
                 # Parse the "when" field into a datetime
-                import pytz
                 tz = pytz.timezone(settings.timezone)  # Use configured timezone
                 now = datetime.now(tz)
                 when_str = followup.get("when", "tomorrow").lower()
@@ -470,7 +473,7 @@ async def telegram_webhook(request: Request):
             suggested_intensity = analysis.get("suggested_intensity")
             if suggested_intensity and isinstance(suggested_intensity, int) and 1 <= suggested_intensity <= 5:
                 intensity_result = await db.execute(
-                    select(Settings).where(Settings.key == "accountability_intensity")
+                    select(SettingsModel).where(SettingsModel.key == "accountability_intensity")
                 )
                 intensity_setting = intensity_result.scalar_one_or_none()
                 if intensity_setting:
@@ -479,7 +482,7 @@ async def telegram_webhook(request: Request):
                         intensity_setting.value = str(suggested_intensity)
                         logger.info(f"Adjusted accountability intensity: {current} -> {suggested_intensity}")
                 else:
-                    db.add(Settings(key="accountability_intensity", value=str(suggested_intensity)))
+                    db.add(SettingsModel(key="accountability_intensity", value=str(suggested_intensity)))
                     logger.info(f"Set accountability intensity to {suggested_intensity}")
 
             # Create response record
@@ -583,9 +586,7 @@ async def webhook_health():
 async def setup_webhook(request: Request):
     """Register webhook URL with Telegram."""
     import httpx
-    from app.config import get_settings
 
-    settings = get_settings()
     if not settings.telegram_bot_token:
         raise HTTPException(status_code=400, detail="Telegram bot token not configured")
 
@@ -613,9 +614,7 @@ async def setup_webhook(request: Request):
 async def webhook_status():
     """Check current webhook status with Telegram."""
     import httpx
-    from app.config import get_settings
 
-    settings = get_settings()
     if not settings.telegram_bot_token:
         raise HTTPException(status_code=400, detail="Telegram bot token not configured")
 
