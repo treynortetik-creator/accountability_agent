@@ -6,6 +6,7 @@ import subprocess
 import time
 import os
 import signal
+import sys
 from playwright.async_api import async_playwright, expect
 
 
@@ -29,9 +30,9 @@ def server():
     if os.path.exists("./test_e2e.db"):
         os.remove("./test_e2e.db")
 
-    # Start the server
+    # Start the server using the same Python interpreter
     process = subprocess.Popen(
-        ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"],
+        [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
