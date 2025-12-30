@@ -13,7 +13,8 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.database import get_db
 from app.auth import verify_api_key
-from app.db_models import Settings, ChatMessage, CheckInSchedule, CheckInPrompt
+from app.db_models import Settings, ChatMessage, CheckInSchedule, CheckInPrompt, ScheduledFollowup, MoodLog
+from sqlalchemy import func
 from app.llm import WARDEN_SYSTEM_PROMPT, DEFAULT_PROMPTS
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -667,3 +668,183 @@ async def reset_prompt_template(
 
     default = DEFAULT_PROMPTS.get(prompt_type, "")
     return {"status": "reset", "prompt_template": default}
+
+
+# =============================================================================
+# Memory Endpoints
+# =============================================================================
+
+@router.put("/memory")
+async def update_memory(
+    update: SettingUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update the LLM memory/context."""
+    await set_setting(db, "llm_memory", update.value)
+    await db.commit()
+    return {"status": "updated", "memory_length": len(update.value)}
+
+
+@router.get("/memory")
+async def get_memory(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get the current LLM memory."""
+    memory = await get_setting(db, "llm_memory", "")
+    return {"memory": memory}
+
+
+@router.delete("/memory")
+async def clear_memory(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Clear the LLM memory."""
+    await set_setting(db, "llm_memory", "")
+    await db.commit()
+    return {"status": "cleared"}
+
+
+# =============================================================================
+# Agent Intelligence Endpoints
+# =============================================================================
+
+@router.get("/agent/intensity")
+async def get_intensity(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get current accountability intensity level (1-5)."""
+    intensity = await get_setting(db, "accountability_intensity", "3")
+    return {"intensity": int(intensity)}
+
+
+@router.put("/agent/intensity")
+async def update_intensity(
+    intensity: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update accountability intensity level (1-5)."""
+    if intensity < 1 or intensity > 5:
+        raise HTTPException(status_code=400, detail="Intensity must be between 1 and 5")
+    await set_setting(db, "accountability_intensity", str(intensity))
+    await db.commit()
+    return {"status": "updated", "intensity": intensity}
+
+
+@router.get("/agent/thinking-level")
+async def get_thinking_level(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get current thinking level for LLM."""
+    level = await get_setting(db, "thinking_level", "medium")
+    return {"thinking_level": level}
+
+
+@router.put("/agent/thinking-level")
+async def update_thinking_level(
+    level: str,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update thinking level for LLM."""
+    valid_levels = ["off", "minimal", "low", "medium", "high"]
+    if level not in valid_levels:
+        raise HTTPException(status_code=400, detail=f"Level must be one of: {', '.join(valid_levels)}")
+    await set_setting(db, "thinking_level", level)
+    await db.commit()
+    return {"status": "updated", "thinking_level": level}
+
+
+@router.get("/agent/mood")
+async def get_mood_trend(
+    days: int = 7,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get mood trends over the specified number of days."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    result = await db.execute(
+        select(
+            func.avg(MoodLog.mood_score).label("avg_mood"),
+            func.count(MoodLog.id).label("count")
+        ).where(MoodLog.created_at >= cutoff)
+    )
+    row = result.one()
+
+    # Calculate average energy (need to convert string to number)
+    energy_result = await db.execute(
+        select(MoodLog.energy_level).where(
+            MoodLog.created_at >= cutoff,
+            MoodLog.energy_level.isnot(None)
+        )
+    )
+    energy_levels = [r[0] for r in energy_result.all()]
+
+    # Convert energy levels to numeric for averaging
+    energy_map = {"low": 1, "medium": 2, "high": 3}
+    if energy_levels:
+        numeric_energy = [energy_map.get(e, 2) for e in energy_levels]
+        avg_energy = sum(numeric_energy) / len(numeric_energy)
+    else:
+        avg_energy = None
+
+    return {
+        "avg_mood": float(row.avg_mood) if row.avg_mood else None,
+        "avg_energy": avg_energy,
+        "entries": row.count,
+        "days": days
+    }
+
+
+@router.get("/agent/followups")
+async def get_followups(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get pending scheduled follow-ups."""
+    result = await db.execute(
+        select(ScheduledFollowup)
+        .where(ScheduledFollowup.status == "pending")
+        .order_by(ScheduledFollowup.scheduled_time)
+    )
+    followups = result.scalars().all()
+
+    return {
+        "followups": [
+            {
+                "id": f.id,
+                "topic": f.topic,
+                "reason": f.reason,
+                "scheduled_time": f.scheduled_time.isoformat() if f.scheduled_time else None,
+                "created_at": f.created_at.isoformat() if f.created_at else None
+            }
+            for f in followups
+        ]
+    }
+
+
+@router.delete("/agent/followups/{followup_id}")
+async def cancel_followup(
+    followup_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Cancel a scheduled follow-up."""
+    result = await db.execute(
+        select(ScheduledFollowup).where(ScheduledFollowup.id == followup_id)
+    )
+    followup = result.scalar_one_or_none()
+
+    if not followup:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+
+    followup.status = "cancelled"
+    await db.commit()
+
+    return {"status": "cancelled", "id": followup_id}
