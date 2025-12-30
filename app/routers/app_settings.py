@@ -707,6 +707,30 @@ async def clear_memory(
     return {"status": "cleared"}
 
 
+@router.get("/chat-history-count")
+async def get_chat_history_count(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get how many chat messages the LLM sees in context."""
+    count = await get_setting(db, "chat_history_count", "15")
+    return {"count": int(count)}
+
+
+@router.put("/chat-history-count")
+async def update_chat_history_count(
+    count: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update how many chat messages the LLM sees in context."""
+    if count < 0 or count > 100:
+        raise HTTPException(status_code=400, detail="Count must be between 0 and 100")
+    await set_setting(db, "chat_history_count", str(count))
+    await db.commit()
+    return {"status": "updated", "count": count}
+
+
 # =============================================================================
 # Agent Intelligence Endpoints
 # =============================================================================

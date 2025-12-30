@@ -68,6 +68,34 @@ class TestDashboard:
         assert "text/html" in response.headers.get("content-type", "")
 
 
+class TestChatHistoryCount:
+    """Test chat history count settings endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_get_chat_history_count(self, client):
+        """Test getting chat history count."""
+        response = await client.get("/api/settings/chat-history-count")
+        assert response.status_code == 200
+        data = response.json()
+        assert "count" in data
+        assert isinstance(data["count"], int)
+
+    @pytest.mark.asyncio
+    async def test_update_chat_history_count(self, client):
+        """Test updating chat history count."""
+        response = await client.put("/api/settings/chat-history-count?count=25")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data["count"] == 25
+
+    @pytest.mark.asyncio
+    async def test_update_chat_history_count_invalid(self, client):
+        """Test updating chat history count with invalid value."""
+        response = await client.put("/api/settings/chat-history-count?count=200")
+        assert response.status_code == 400
+
+
 class TestSettingsMemory:
     """Test memory settings endpoints."""
 
