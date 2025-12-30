@@ -417,7 +417,7 @@ async def telegram_webhook(request: Request):
             if followup and isinstance(followup, dict) and followup.get("topic"):
                 # Parse the "when" field into a datetime
                 import pytz
-                tz = pytz.timezone("America/Phoenix")
+                tz = pytz.timezone(settings.timezone)  # Use configured timezone
                 now = datetime.now(tz)
                 when_str = followup.get("when", "tomorrow").lower()
 
