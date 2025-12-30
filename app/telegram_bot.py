@@ -118,7 +118,7 @@ class TelegramService:
 
         Args:
             text: Message text to send
-            parse_mode: Telegram parse mode (default: Markdown)
+            parse_mode: Telegram parse mode (default: None for plain text, most reliable)
             ignore_quiet_hours: If True, send even during quiet hours (for replies)
 
         Returns the message ID if successful, None otherwise.
@@ -132,26 +132,47 @@ class TelegramService:
             logger.info(f"Quiet hours active, skipping scheduled message")
             return None
 
+        # Log what we're about to send for debugging
+        text_preview = text[:100] + "..." if len(text) > 100 else text
+        logger.info(f"Attempting to send Telegram message to chat_id={self.chat_id}: {text_preview}")
+
+        # Try sending as plain text first (most reliable)
         try:
             message = await self.bot.send_message(
                 chat_id=self.chat_id,
                 text=text,
-                parse_mode=parse_mode or ParseMode.MARKDOWN,
             )
-            logger.info(f"Sent Telegram message: {message.message_id}")
+            logger.info(f"Sent Telegram message (plain): {message.message_id}")
             return str(message.message_id)
         except Exception as e:
-            logger.error(f"Failed to send Telegram message: {e}")
-            # Try without markdown if it fails
-            try:
-                message = await self.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=text,
+            logger.error(f"Failed to send plain Telegram message: {e}", exc_info=True)
+            # Log to ErrorLog for visibility in UI
+            await self._log_send_error(text, str(e))
+            return None
+
+    async def _log_send_error(self, message_text: str, error_message: str):
+        """Log Telegram send errors to the database for UI visibility."""
+        try:
+            from app.database import async_session_maker
+            from app.db_models import ErrorLog
+            import json
+
+            async with async_session_maker() as db:
+                error_log = ErrorLog(
+                    error_type="TelegramSendError",
+                    error_message=error_message,
+                    context=json.dumps({
+                        "chat_id": self.chat_id,
+                        "message_preview": message_text[:200] if message_text else None,
+                    }),
+                    source="telegram_bot",
+                    user_message=None,
                 )
-                return str(message.message_id)
-            except Exception as e2:
-                logger.error(f"Failed to send plain Telegram message: {e2}")
-                return None
+                db.add(error_log)
+                await db.commit()
+                logger.info(f"Logged Telegram send error to database")
+        except Exception as log_error:
+            logger.error(f"Failed to log send error to database: {log_error}")
 
     async def send_check_in(self, message: str) -> str | None:
         """Send a check-in message."""

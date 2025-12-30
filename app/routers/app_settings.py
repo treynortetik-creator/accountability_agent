@@ -247,7 +247,7 @@ async def get_chat_history(
             role=m.role,
             content=m.content,
             message_type=m.message_type,
-            created_at=m.created_at.isoformat(),
+            created_at=m.created_at.isoformat() + "Z",  # Add Z to indicate UTC
         )
         for m in messages
     ]
