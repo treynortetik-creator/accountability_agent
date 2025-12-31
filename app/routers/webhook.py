@@ -621,6 +621,7 @@ async def setup_webhook(request: Request):
     """Register webhook URL with Telegram."""
     import httpx
     import json as json_module
+    import asyncio
 
     if not settings.telegram_bot_token:
         raise HTTPException(status_code=400, detail="Telegram bot token not configured")
@@ -633,42 +634,54 @@ async def setup_webhook(request: Request):
 
     logger.info(f"Setting up webhook with URL: {webhook_url}")
 
-    try:
-        # Call Telegram API to set webhook
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"https://api.telegram.org/bot{settings.telegram_bot_token}/setWebhook",
-                json={"url": webhook_url}
-            )
-            result = response.json()
+    # Retry logic for Railway's flaky network to Telegram
+    max_retries = 3
+    last_error = None
 
-        if result.get("ok"):
-            logger.info(f"Webhook setup successful: {webhook_url}")
-            return {"status": "success", "webhook_url": webhook_url, "telegram_response": result}
-        else:
-            error_msg = result.get("description", "Unknown error")
-            logger.error(f"Telegram rejected webhook setup: {error_msg}")
-            # Log to ErrorLog for UI visibility
-            await _log_webhook_error("WebhookSetupError", error_msg, {"webhook_url": webhook_url, "telegram_response": result})
-            return {"status": "error", "error": error_msg, "webhook_url": webhook_url, "telegram_response": result}
+    for attempt in range(max_retries):
+        try:
+            # Use longer timeout (60s) for Railway's network latency
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"https://api.telegram.org/bot{settings.telegram_bot_token}/setWebhook",
+                    json={"url": webhook_url}
+                )
+                result = response.json()
 
-    except httpx.TimeoutException as e:
-        error_msg = f"Timeout connecting to Telegram API: {str(e)}"
-        logger.error(error_msg)
-        await _log_webhook_error("WebhookSetupTimeout", error_msg, {"webhook_url": webhook_url})
-        return {"status": "error", "error": error_msg, "webhook_url": webhook_url}
+            if result.get("ok"):
+                logger.info(f"Webhook setup successful: {webhook_url}")
+                return {"status": "success", "webhook_url": webhook_url, "telegram_response": result}
+            else:
+                error_msg = result.get("description", "Unknown error")
+                logger.error(f"Telegram rejected webhook setup: {error_msg}")
+                await _log_webhook_error("WebhookSetupError", error_msg, {"webhook_url": webhook_url, "telegram_response": result})
+                return {"status": "error", "error": error_msg, "webhook_url": webhook_url, "telegram_response": result}
 
-    except httpx.RequestError as e:
-        error_msg = f"Network error connecting to Telegram API: {str(e)}"
-        logger.error(error_msg)
-        await _log_webhook_error("WebhookSetupNetworkError", error_msg, {"webhook_url": webhook_url})
-        return {"status": "error", "error": error_msg, "webhook_url": webhook_url}
+        except httpx.TimeoutException as e:
+            last_error = e
+            logger.warning(f"Webhook setup timeout (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2.0 * (attempt + 1))  # Exponential backoff
+            continue
 
-    except Exception as e:
-        error_msg = f"Unexpected error during webhook setup: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        await _log_webhook_error("WebhookSetupError", error_msg, {"webhook_url": webhook_url})
-        return {"status": "error", "error": error_msg, "webhook_url": webhook_url}
+        except httpx.RequestError as e:
+            last_error = e
+            logger.warning(f"Webhook setup network error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2.0 * (attempt + 1))
+            continue
+
+        except Exception as e:
+            error_msg = f"Unexpected error during webhook setup: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            await _log_webhook_error("WebhookSetupError", error_msg, {"webhook_url": webhook_url})
+            return {"status": "error", "error": error_msg, "webhook_url": webhook_url}
+
+    # All retries failed
+    error_msg = f"Webhook setup failed after {max_retries} retries: {last_error}"
+    logger.error(error_msg)
+    await _log_webhook_error("WebhookSetupTimeout", error_msg, {"webhook_url": webhook_url, "retries": max_retries})
+    return {"status": "error", "error": error_msg, "webhook_url": webhook_url}
 
 
 async def _log_webhook_error(error_type: str, error_message: str, context: dict):
@@ -694,41 +707,56 @@ async def _log_webhook_error(error_type: str, error_message: str, context: dict)
 async def webhook_status():
     """Check current webhook status with Telegram."""
     import httpx
+    import asyncio
 
     if not settings.telegram_bot_token:
         raise HTTPException(status_code=400, detail="Telegram bot token not configured")
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"https://api.telegram.org/bot{settings.telegram_bot_token}/getWebhookInfo"
-            )
-            result = response.json()
+    # Retry logic for Railway's flaky network
+    max_retries = 3
+    last_error = None
 
-        # Log any pending errors from Telegram
-        if result.get("result", {}).get("last_error_message"):
-            last_error = result["result"]["last_error_message"]
-            last_error_date = result["result"].get("last_error_date")
-            logger.warning(f"Telegram webhook has pending error: {last_error} (at {last_error_date})")
-            await _log_webhook_error(
-                "WebhookDeliveryError",
-                last_error,
-                {"last_error_date": last_error_date, "webhook_url": result["result"].get("url")}
-            )
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.get(
+                    f"https://api.telegram.org/bot{settings.telegram_bot_token}/getWebhookInfo"
+                )
+                result = response.json()
 
-        return result
+            # Log any pending errors from Telegram
+            if result.get("result", {}).get("last_error_message"):
+                last_error_msg = result["result"]["last_error_message"]
+                last_error_date = result["result"].get("last_error_date")
+                logger.warning(f"Telegram webhook has pending error: {last_error_msg} (at {last_error_date})")
+                await _log_webhook_error(
+                    "WebhookDeliveryError",
+                    last_error_msg,
+                    {"last_error_date": last_error_date, "webhook_url": result["result"].get("url")}
+                )
 
-    except httpx.TimeoutException as e:
-        error_msg = f"Timeout checking webhook status: {str(e)}"
-        logger.error(error_msg)
-        return {"ok": False, "error": error_msg}
+            return result
 
-    except httpx.RequestError as e:
-        error_msg = f"Network error checking webhook status: {str(e)}"
-        logger.error(error_msg)
-        return {"ok": False, "error": error_msg}
+        except httpx.TimeoutException as e:
+            last_error = e
+            logger.warning(f"Webhook status timeout (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2.0 * (attempt + 1))
+            continue
 
-    except Exception as e:
-        error_msg = f"Unexpected error checking webhook status: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return {"ok": False, "error": error_msg}
+        except httpx.RequestError as e:
+            last_error = e
+            logger.warning(f"Webhook status network error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2.0 * (attempt + 1))
+            continue
+
+        except Exception as e:
+            error_msg = f"Unexpected error checking webhook status: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {"ok": False, "error": error_msg}
+
+    # All retries failed
+    error_msg = f"Webhook status check failed after {max_retries} retries: {last_error}"
+    logger.error(error_msg)
+    return {"ok": False, "error": error_msg}
