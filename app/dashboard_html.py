@@ -253,6 +253,76 @@ DASHBOARD_HTML = """
         .chat-time { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
         .chat-type { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-bottom: 4px; }
 
+        .chat-input-container {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+
+        .chat-input-container form {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 12px 20px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .chat-input:focus {
+            border-color: var(--accent);
+        }
+
+        .chat-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .chat-send-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: none;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+
+        .chat-send-btn:hover {
+            background: var(--accent-dim);
+            transform: scale(1.05);
+        }
+
+        .chat-send-btn:disabled {
+            background: var(--bg-tertiary);
+            color: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .chat-send-btn.loading {
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
         .list-item {
             display: flex;
             justify-content: space-between;
@@ -593,8 +663,16 @@ DASHBOARD_HTML = """
                         </div>
                     </div>
                 </div>
-                <div class="chat-container">
+                <div class="chat-container" style="height: 600px;">
                     <div class="chat-messages" id="chat-messages"><div class="empty-state">Loading...</div></div>
+                    <div class="chat-input-container">
+                        <form id="chat-form" onsubmit="sendChatMessage(event)">
+                            <input type="text" id="chat-input" class="chat-input" placeholder="Message The Warden..." autocomplete="off" />
+                            <button type="submit" id="chat-send-btn" class="chat-send-btn" title="Send message">
+                                <span id="chat-send-icon">➤</span>
+                            </button>
+                        </form>
+                    </div>
                 </div>
 
                 <!-- LLM Memory Section -->
@@ -1171,7 +1249,7 @@ DASHBOARD_HTML = """
         async function loadChatHistory() {
             const messages = await api('GET', '/settings/chat-history?limit=50');
             const container = document.getElementById('chat-messages');
-            if (!messages || !messages.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><p>No messages yet</p></div>'; return; }
+            if (!messages || !messages.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><p>No messages yet. Say hi!</p></div>'; return; }
             container.innerHTML = messages.map(m => `<div class="chat-message ${m.role}"><div class="chat-avatar">${m.role === 'warden' ? '🔒' : '👤'}</div><div>${m.message_type ? `<div class="chat-type">${m.message_type.replace('_', ' ')}</div>` : ''}<div class="chat-bubble">${m.content}</div><div class="chat-time">${new Date(m.created_at).toLocaleString()}</div></div></div>`).join('');
             container.scrollTop = container.scrollHeight;
 
@@ -1183,6 +1261,59 @@ DASHBOARD_HTML = """
 
             // Load memory
             await loadMemory();
+        }
+
+        async function sendChatMessage(event) {
+            event.preventDefault();
+
+            const input = document.getElementById('chat-input');
+            const sendBtn = document.getElementById('chat-send-btn');
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            // Disable input while sending
+            input.disabled = true;
+            sendBtn.disabled = true;
+            sendBtn.classList.add('loading');
+
+            // Immediately add user message to chat
+            const container = document.getElementById('chat-messages');
+            const userMsgHtml = `<div class="chat-message user"><div class="chat-avatar">👤</div><div><div class="chat-bubble">${escapeHtml(message)}</div><div class="chat-time">${new Date().toLocaleString()}</div></div></div>`;
+            container.insertAdjacentHTML('beforeend', userMsgHtml);
+            container.scrollTop = container.scrollHeight;
+
+            // Clear input
+            input.value = '';
+
+            try {
+                // Send message to API
+                const response = await api('POST', '/settings/chat/send', { message });
+
+                if (response && response.reply) {
+                    // Add Warden's reply to chat
+                    const wardenMsgHtml = `<div class="chat-message warden"><div class="chat-avatar">🔒</div><div><div class="chat-type">reply</div><div class="chat-bubble">${escapeHtml(response.reply)}</div><div class="chat-time">${new Date().toLocaleString()}</div></div></div>`;
+                    container.insertAdjacentHTML('beforeend', wardenMsgHtml);
+                    container.scrollTop = container.scrollHeight;
+                } else {
+                    showToast('Failed to get response', 'error');
+                }
+            } catch (error) {
+                console.error('Chat error:', error);
+                showToast('Failed to send message', 'error');
+            } finally {
+                // Re-enable input
+                input.disabled = false;
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('loading');
+                input.focus();
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         async function loadMemory() {

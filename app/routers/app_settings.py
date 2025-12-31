@@ -953,3 +953,273 @@ async def update_quiet_hours(
         "end_hour": end_hour if end_hour is not None else None,
         "end_minute": end_minute if end_minute is not None else None,
     }
+
+
+class SendChatRequest(BaseModel):
+    """Request model for sending a chat message from dashboard."""
+    message: str
+
+
+class SendChatResponse(BaseModel):
+    """Response model for dashboard chat."""
+    reply: str
+    user_message_id: int
+    warden_message_id: int
+
+
+@router.post("/chat/send", response_model=SendChatResponse)
+async def send_chat_message(
+    request: SendChatRequest,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Send a chat message from the dashboard and get the Warden's reply.
+
+    This processes messages the same way as Telegram, but without sending to Telegram.
+    """
+    from app.routers.webhook import (
+        try_handle_completion,
+        handle_pending_confirmation,
+        try_parse_commitment,
+    )
+    from app.scheduler import get_context
+    from app.llm import analyze_response
+    from app.db_models import (
+        CheckIn, Response, Commitment, CommitmentStatus,
+        ScheduledFollowup, MoodLog
+    )
+    from app.streaks import update_response_streak
+    import pytz
+
+    message_text = request.message.strip()
+    if not message_text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Update response streak
+    await update_response_streak(db)
+
+    # Save user message to chat history
+    user_chat_msg = ChatMessage(
+        role="user",
+        content=message_text,
+        message_type="reply",
+        telegram_message_id=None,  # No Telegram message for dashboard chat
+    )
+    db.add(user_chat_msg)
+    await db.flush()  # Get the ID
+    user_message_id = user_chat_msg.id
+
+    # Check if this is a completion phrase ("done", "shipped", etc.)
+    handled, reply = await try_handle_completion(db, message_text)
+    if handled:
+        if reply:
+            warden_chat_msg = ChatMessage(
+                role="warden",
+                content=reply,
+                message_type="completion",
+                telegram_message_id=None,
+            )
+            db.add(warden_chat_msg)
+            await db.flush()
+            await db.commit()
+            return SendChatResponse(
+                reply=reply,
+                user_message_id=user_message_id,
+                warden_message_id=warden_chat_msg.id,
+            )
+
+    # Check if this is a confirmation response to a pending commitment
+    handled, reply = await handle_pending_confirmation(db, message_text)
+    if handled:
+        if reply:
+            warden_chat_msg = ChatMessage(
+                role="warden",
+                content=reply,
+                message_type="commitment_confirm",
+                telegram_message_id=None,
+            )
+            db.add(warden_chat_msg)
+            await db.flush()
+            await db.commit()
+            return SendChatResponse(
+                reply=reply,
+                user_message_id=user_message_id,
+                warden_message_id=warden_chat_msg.id,
+            )
+
+    # Build context for analysis
+    context = await get_context(db)
+
+    # Try to parse as a commitment first
+    parsed_commitment, commit_reply = await try_parse_commitment(db, message_text, context)
+    if parsed_commitment:
+        if commit_reply:
+            warden_chat_msg = ChatMessage(
+                role="warden",
+                content=commit_reply,
+                message_type="commitment_confirm",
+                telegram_message_id=None,
+            )
+            db.add(warden_chat_msg)
+            await db.flush()
+            await db.commit()
+            return SendChatResponse(
+                reply=commit_reply,
+                user_message_id=user_message_id,
+                warden_message_id=warden_chat_msg.id,
+            )
+
+    # Find the most recent unanswered check-in
+    recent_checkin = await db.execute(
+        select(CheckIn)
+        .where(CheckIn.response_received == False)
+        .order_by(CheckIn.sent_at.desc())
+        .limit(1)
+    )
+    checkin = recent_checkin.scalar_one_or_none()
+
+    # Calculate days since last shipped
+    last_shipped = await db.execute(
+        select(Commitment)
+        .where(Commitment.status == CommitmentStatus.COMPLETED)
+        .order_by(Commitment.completed_at.desc())
+        .limit(1)
+    )
+    last_shipped_commitment = last_shipped.scalar_one_or_none()
+    if last_shipped_commitment and last_shipped_commitment.completed_at:
+        days_since_shipped = (
+            datetime.utcnow() - last_shipped_commitment.completed_at
+        ).days
+    else:
+        days_since_shipped = "never"
+    context["days_since_shipped"] = days_since_shipped
+
+    # Fetch recent chat history for context
+    chat_history_result = await db.execute(
+        select(ChatMessage)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(20)
+    )
+    chat_messages = list(reversed(chat_history_result.scalars().all()))
+    chat_history = [
+        {"role": msg.role, "content": msg.content}
+        for msg in chat_messages
+    ]
+
+    # Analyze the response using LLM (with chat history)
+    analysis = await analyze_response(message_text, context, chat_history)
+
+    # Process memory update if provided
+    memory_update = analysis.get("memory_update")
+    if memory_update:
+        memory_result = await db.execute(
+            select(Settings).where(Settings.key == "llm_memory")
+        )
+        memory_setting = memory_result.scalar_one_or_none()
+        current_memory = memory_setting.value if memory_setting else ""
+
+        if isinstance(memory_update, str) and memory_update.strip():
+            new_memory = memory_update.strip()
+        elif isinstance(memory_update, dict):
+            action = memory_update.get("action", "replace")
+            content = memory_update.get("content", "").strip()
+
+            if action == "append" and content:
+                if current_memory:
+                    new_memory = f"{current_memory}\n{content}"
+                else:
+                    new_memory = content
+            elif action == "remove" and content:
+                new_memory = current_memory.replace(content, "").strip()
+                while "\n\n\n" in new_memory:
+                    new_memory = new_memory.replace("\n\n\n", "\n\n")
+            elif action == "replace" and content:
+                new_memory = content
+            else:
+                new_memory = None
+        else:
+            new_memory = None
+
+        if new_memory is not None:
+            if memory_setting:
+                memory_setting.value = new_memory
+            else:
+                db.add(Settings(key="llm_memory", value=new_memory))
+
+    # Process scheduled follow-up if provided
+    followup = analysis.get("schedule_followup")
+    if followup and isinstance(followup, dict) and followup.get("topic"):
+        tz = pytz.timezone("America/Phoenix")  # TODO: use settings timezone
+        now = datetime.now(tz)
+        when_str = followup.get("when", "tomorrow").lower()
+
+        scheduled_time = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+        if "tomorrow" in when_str and "morning" not in when_str and "evening" not in when_str:
+            scheduled_time = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+        elif "tonight" in when_str or "this evening" in when_str:
+            scheduled_time = now.replace(hour=19, minute=0, second=0, microsecond=0)
+            if scheduled_time <= now:
+                scheduled_time += timedelta(days=1)
+
+        scheduled_time_utc = scheduled_time.astimezone(pytz.UTC).replace(tzinfo=None)
+
+        db.add(ScheduledFollowup(
+            topic=followup["topic"],
+            reason=followup.get("reason"),
+            scheduled_time=scheduled_time_utc,
+        ))
+
+    # Process mood assessment if provided
+    mood = analysis.get("mood_assessment")
+    if mood and isinstance(mood, dict):
+        mood_score = mood.get("mood_score")
+        energy_level = mood.get("energy_level")
+        if mood_score or energy_level:
+            db.add(MoodLog(
+                mood_score=mood_score,
+                energy_level=energy_level,
+                detected_from="llm_analysis",
+                notes=mood.get("notes"),
+            ))
+
+    # Create response record
+    response = Response(
+        check_in_id=checkin.id if checkin else None,
+        message_text=message_text,
+        telegram_message_id=None,  # No Telegram for dashboard
+        received_at=datetime.utcnow(),
+        detected_shipped=analysis.get("shipped"),
+        detected_excuse=analysis.get("excuse"),
+        detected_avoidance=analysis.get("avoidance"),
+        analysis_notes=analysis.get("notes"),
+    )
+    db.add(response)
+
+    # Mark check-in as responded if we found one
+    if checkin:
+        checkin.response_received = True
+        checkin.responded_at = datetime.utcnow()
+
+    # Get reply from analysis
+    reply = analysis.get("reply")
+    if not reply:
+        reply = "Got it. What's next on the list?"
+
+    # Save warden reply to chat history
+    warden_chat_msg = ChatMessage(
+        role="warden",
+        content=reply,
+        message_type="reply",
+        telegram_message_id=None,
+    )
+    db.add(warden_chat_msg)
+    await db.flush()
+
+    await db.commit()
+
+    return SendChatResponse(
+        reply=reply,
+        user_message_id=user_message_id,
+        warden_message_id=warden_chat_msg.id,
+    )
