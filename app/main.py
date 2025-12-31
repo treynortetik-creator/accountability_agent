@@ -139,6 +139,34 @@ async def debug_auth():
     }
 
 
+@app.get("/debug/db")
+async def debug_db():
+    """Debug endpoint to test database connection."""
+    from app.config import get_settings
+    from app.database import async_session_maker
+    from sqlalchemy import text
+
+    s = get_settings()
+    result = {
+        "database_url_prefix": s.database_url[:60] + "..." if len(s.database_url) > 60 else s.database_url,
+        "database_url_contains_pooler": "pooler.supabase.com" in s.database_url,
+        "database_url_port": "6543" if ":6543" in s.database_url else ("5432" if ":5432" in s.database_url else "unknown"),
+    }
+
+    try:
+        async with async_session_maker() as db:
+            query_result = await db.execute(text("SELECT 1 as test"))
+            row = query_result.fetchone()
+            result["connection"] = "SUCCESS"
+            result["query_result"] = row[0] if row else None
+    except Exception as e:
+        result["connection"] = "FAILED"
+        result["error_type"] = type(e).__name__
+        result["error_message"] = str(e)
+
+    return result
+
+
 @app.post("/api/trigger/checkin")
 async def trigger_checkin(
     request: ManualCheckInRequest = None,
