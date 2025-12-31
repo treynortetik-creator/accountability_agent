@@ -102,6 +102,21 @@ async def health():
     return {"status": "healthy", "scheduler": "running"}
 
 
+@app.get("/debug/auth")
+async def debug_auth():
+    """Debug endpoint to check auth config (remove in production)."""
+    from app.config import get_settings
+    s = get_settings()
+    return {
+        "api_key_configured": bool(s.api_key),
+        "api_key_length": len(s.api_key) if s.api_key else 0,
+        "api_key_first_5": s.api_key[:5] if s.api_key and len(s.api_key) >= 5 else "N/A",
+        "api_key_last_3": s.api_key[-3:] if s.api_key and len(s.api_key) >= 3 else "N/A",
+        "telegram_chat_id_set": bool(s.telegram_chat_id),
+        "database_url_type": "postgresql" if "postgresql" in s.database_url else "sqlite",
+    }
+
+
 @app.post("/api/trigger/checkin")
 async def trigger_checkin(
     request: ManualCheckInRequest = None,
