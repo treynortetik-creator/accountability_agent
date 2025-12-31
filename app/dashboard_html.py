@@ -1112,12 +1112,23 @@ DASHBOARD_HTML = """
         if (API_KEY) { document.getElementById('apiKeyInput').value = API_KEY; authenticate(); }
 
         async function api(method, endpoint, data = null) {
-            const opts = { method, headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' } };
-            if (data) opts.body = JSON.stringify(data);
-            const res = await fetch('/api' + endpoint, opts);
-            if (res.status === 401 || res.status === 403) { showToast('Invalid API key', 'error'); return null; }
-            if (!res.ok) return null;
-            return res.status === 204 ? null : await res.json();
+            try {
+                const opts = { method, headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' } };
+                if (data) opts.body = JSON.stringify(data);
+                const res = await fetch('/api' + endpoint, opts);
+                if (res.status === 401 || res.status === 403) { showToast('Invalid API key', 'error'); return null; }
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    console.error('API error:', res.status, errorText);
+                    showToast('Server error: ' + res.status, 'error');
+                    return null;
+                }
+                return res.status === 204 ? null : await res.json();
+            } catch (e) {
+                console.error('API fetch error:', e);
+                showToast('Connection error', 'error');
+                return null;
+            }
         }
 
         function showToast(msg, type = 'success') {
