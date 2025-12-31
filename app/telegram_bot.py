@@ -127,7 +127,7 @@ class TelegramService:
             self.bot = Bot(token=settings.telegram_bot_token, request=request)
 
     async def send_message(
-        self, text: str, parse_mode: str = None, ignore_quiet_hours: bool = False
+        self, text: str, parse_mode: str = None, ignore_quiet_hours: bool = False, chat_id: str = None
     ) -> str | None:
         """Send a message to the configured chat.
 
@@ -135,10 +135,12 @@ class TelegramService:
             text: Message text to send
             parse_mode: Telegram parse mode (default: None for plain text, most reliable)
             ignore_quiet_hours: If True, send even during quiet hours (for replies)
+            chat_id: Override the default chat_id (for multi-user support)
 
         Returns the message ID if successful, None otherwise.
         """
-        if not self.bot or not self.chat_id:
+        target_chat_id = chat_id or self.chat_id
+        if not self.bot or not target_chat_id:
             logger.warning("Telegram not configured, skipping message send")
             return None
 
@@ -149,7 +151,7 @@ class TelegramService:
 
         # Log what we're about to send for debugging
         text_preview = text[:100] + "..." if len(text) > 100 else text
-        logger.info(f"Attempting to send Telegram message to chat_id={self.chat_id}: {text_preview}")
+        logger.info(f"Attempting to send Telegram message to chat_id={target_chat_id}: {text_preview}")
 
         # Try sending with retry on timeout
         max_retries = 3
@@ -158,7 +160,7 @@ class TelegramService:
         for attempt in range(max_retries):
             try:
                 message = await self.bot.send_message(
-                    chat_id=self.chat_id,
+                    chat_id=target_chat_id,
                     text=text,
                 )
                 logger.info(f"Sent Telegram message (plain): {message.message_id}")
@@ -205,22 +207,22 @@ class TelegramService:
         except Exception as log_error:
             logger.error(f"Failed to log send error to database: {log_error}")
 
-    async def send_check_in(self, message: str) -> str | None:
+    async def send_check_in(self, message: str, chat_id: str = None) -> str | None:
         """Send a check-in message."""
-        return await self.send_message(message)
+        return await self.send_message(message, chat_id=chat_id)
 
-    async def send_escalation(self, message: str) -> str | None:
+    async def send_escalation(self, message: str, chat_id: str = None) -> str | None:
         """Send an escalation message (more urgent)."""
         # Could add emoji or formatting for urgency
-        return await self.send_message(f"⚠️ {message}")
+        return await self.send_message(f"⚠️ {message}", chat_id=chat_id)
 
-    async def send_weekly_review(self, message: str) -> str | None:
+    async def send_weekly_review(self, message: str, chat_id: str = None) -> str | None:
         """Send the weekly review message."""
-        return await self.send_message(f"📊 WEEKLY REVIEW\n\n{message}")
+        return await self.send_message(f"📊 WEEKLY REVIEW\n\n{message}", chat_id=chat_id)
 
-    async def send_deadline_alert(self, message: str) -> str | None:
+    async def send_deadline_alert(self, message: str, chat_id: str = None) -> str | None:
         """Send a deadline alert."""
-        return await self.send_message(f"⏰ {message}")
+        return await self.send_message(f"⏰ {message}", chat_id=chat_id)
 
 
 # Global instance

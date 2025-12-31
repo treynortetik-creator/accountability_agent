@@ -325,76 +325,97 @@ async def weekly_review_job():
 
     async with async_session_maker() as db:
         try:
-            # Update completion streak first
-            streak_result = await update_completion_streak(db)
-            logger.info(f"Completion streak updated: {streak_result}")
+            # Get all active users
+            users = await get_all_active_users(db)
+            if not users:
+                logger.warning("No active users found, skipping weekly review")
+                return
 
-            context = await get_context(db)
+            for user in users:
+                try:
+                    # Update completion streak first for this user
+                    streak_result = await update_completion_streak(db, user)
+                    logger.info(f"Completion streak updated for user {user.id}: {streak_result}")
 
-            # Add weekly-specific stats
-            week_ago = datetime.utcnow() - timedelta(days=7)
+                    context = await get_context(db, user)
 
-            # Weekly completions
-            completed_result = await db.execute(
-                select(func.count(Commitment.id)).where(
-                    and_(
-                        Commitment.status == CommitmentStatus.COMPLETED,
-                        Commitment.completed_at > week_ago,
+                    # Add weekly-specific stats
+                    week_ago = datetime.utcnow() - timedelta(days=7)
+
+                    # Weekly completions for this user
+                    completed_result = await db.execute(
+                        select(func.count(Commitment.id)).where(
+                            and_(
+                                Commitment.user_id == user.id,
+                                Commitment.status == CommitmentStatus.COMPLETED,
+                                Commitment.completed_at > week_ago,
+                            )
+                        )
                     )
-                )
-            )
-            context["weekly_completed"] = completed_result.scalar() or 0
+                    context["weekly_completed"] = completed_result.scalar() or 0
 
-            # Weekly failures/deferrals
-            failed_result = await db.execute(
-                select(func.count(Commitment.id)).where(
-                    and_(
-                        Commitment.status.in_(
-                            [CommitmentStatus.FAILED, CommitmentStatus.DEFERRED]
-                        ),
-                        Commitment.updated_at > week_ago,
+                    # Weekly failures/deferrals for this user
+                    failed_result = await db.execute(
+                        select(func.count(Commitment.id)).where(
+                            and_(
+                                Commitment.user_id == user.id,
+                                Commitment.status.in_(
+                                    [CommitmentStatus.FAILED, CommitmentStatus.DEFERRED]
+                                ),
+                                Commitment.updated_at > week_ago,
+                            )
+                        )
                     )
-                )
-            )
-            context["weekly_failed"] = failed_result.scalar() or 0
+                    context["weekly_failed"] = failed_result.scalar() or 0
 
-            # Weekly response rate
-            checkins_result = await db.execute(
-                select(CheckIn).where(CheckIn.sent_at > week_ago)
-            )
-            checkins = checkins_result.scalars().all()
-            if checkins:
-                responded = sum(1 for c in checkins if c.response_received)
-                context["weekly_response_rate"] = round(responded / len(checkins) * 100, 1)
-            else:
-                context["weekly_response_rate"] = 0
+                    # Weekly response rate for this user
+                    checkins_result = await db.execute(
+                        select(CheckIn).where(
+                            CheckIn.user_id == user.id,
+                            CheckIn.sent_at > week_ago
+                        )
+                    )
+                    checkins = checkins_result.scalars().all()
+                    if checkins:
+                        responded = sum(1 for c in checkins if c.response_received)
+                        context["weekly_response_rate"] = round(responded / len(checkins) * 100, 1)
+                    else:
+                        context["weekly_response_rate"] = 0
 
-            # Generate review message (now includes planning prompt at the end)
-            message = await generate_message("weekly_review", context)
+                    # Generate review message (now includes planning prompt at the end)
+                    message = await generate_message("weekly_review", context)
 
-            # Send via Telegram
-            msg_id = await telegram_service.send_weekly_review(message)
+                    # Send via Telegram to user's chat
+                    msg_id = await telegram_service.send_weekly_review(message, chat_id=user.telegram_chat_id)
 
-            # Record check-in
-            checkin = CheckIn(
-                check_in_type=CheckInType.WEEKLY_REVIEW,
-                message_sent=message,
-                telegram_message_id=msg_id,
-            )
-            db.add(checkin)
+                    # Record check-in
+                    checkin = CheckIn(
+                        user_id=user.id,
+                        check_in_type=CheckInType.WEEKLY_REVIEW,
+                        message_sent=message,
+                        telegram_message_id=msg_id,
+                    )
+                    db.add(checkin)
 
-            # Save to chat history
-            chat_msg = ChatMessage(
-                role="warden",
-                content=message,
-                message_type="weekly_review",
-                telegram_message_id=msg_id,
-            )
-            db.add(chat_msg)
+                    # Save to chat history
+                    chat_msg = ChatMessage(
+                        user_id=user.id,
+                        role="warden",
+                        content=message,
+                        message_type="weekly_review",
+                        telegram_message_id=msg_id,
+                    )
+                    db.add(chat_msg)
+
+                    logger.info(f"Weekly review sent to user {user.id}")
+
+                except Exception as user_error:
+                    logger.error(f"Weekly review failed for user {user.id}: {user_error}", exc_info=True)
+                    await log_scheduler_error("weekly_review", user_error, user.id)
+                    continue
 
             await db.commit()
-
-            logger.info("Weekly review sent successfully")
+            logger.info("Weekly review job completed")
 
         except Exception as e:
             logger.error(f"Weekly review failed: {e}", exc_info=True)
