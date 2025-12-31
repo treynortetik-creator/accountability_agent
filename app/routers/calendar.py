@@ -273,6 +273,117 @@ async def sync_calendar(
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 
+@router.get("/debug-sync")
+async def debug_calendar_sync(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Debug endpoint to see exactly what's happening with calendar sync."""
+    import json
+    from app.user_service import get_default_user
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    from datetime import timedelta
+    import pytz
+    from app.config import get_settings
+
+    settings = get_settings()
+    debug_info = {"steps": []}
+
+    try:
+        # Step 1: Get user
+        user = await get_default_user(db)
+        debug_info["steps"].append({"step": "get_user", "user_id": str(user.id)})
+
+        # Step 2: Get token from database
+        result = await db.execute(
+            select(Settings).where(Settings.key == "google_calendar_token")
+        )
+        token_setting = result.scalar_one_or_none()
+
+        if not token_setting:
+            debug_info["error"] = "No token setting found in database"
+            return debug_info
+
+        token_data = json.loads(token_setting.value)
+        debug_info["steps"].append({
+            "step": "get_token",
+            "has_client_id": bool(token_data.get("client_id")),
+            "has_client_secret": bool(token_data.get("client_secret")),
+            "has_token": bool(token_data.get("token")),
+            "has_refresh_token": bool(token_data.get("refresh_token")),
+            "token_preview": token_data.get("token", "")[:20] + "..." if token_data.get("token") else None,
+        })
+
+        if not token_data.get("token"):
+            debug_info["error"] = "Access token is null"
+            return debug_info
+
+        # Step 3: Create credentials
+        creds = Credentials(
+            token=token_data.get('token'),
+            refresh_token=token_data.get('refresh_token'),
+            token_uri=token_data.get('token_uri', 'https://oauth2.googleapis.com/token'),
+            client_id=token_data.get('client_id'),
+            client_secret=token_data.get('client_secret'),
+        )
+        debug_info["steps"].append({
+            "step": "create_credentials",
+            "valid": creds.valid,
+            "expired": creds.expired,
+        })
+
+        # Step 4: Build service and fetch events
+        service = build('calendar', 'v3', credentials=creds)
+
+        tz = pytz.timezone(settings.timezone)
+        now = datetime.now(tz)
+        time_min = now.isoformat()
+        time_max = (now + timedelta(days=14)).isoformat()
+
+        debug_info["steps"].append({
+            "step": "fetch_events",
+            "time_min": time_min,
+            "time_max": time_max,
+        })
+
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=time_min,
+            timeMax=time_max,
+            maxResults=100,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+
+        events = events_result.get('items', [])
+        debug_info["steps"].append({
+            "step": "events_received",
+            "count": len(events),
+            "events": [
+                {"title": e.get("summary", "No Title"), "start": e.get("start", {})}
+                for e in events[:5]  # First 5 events
+            ]
+        })
+
+        # Step 5: Check database
+        db_result = await db.execute(select(CalendarEvent))
+        db_events = db_result.scalars().all()
+        debug_info["steps"].append({
+            "step": "database_check",
+            "events_in_db": len(db_events),
+        })
+
+        debug_info["success"] = True
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        debug_info["error"] = str(e)
+        debug_info["traceback"] = traceback.format_exc()
+        return debug_info
+
+
 @router.post("/connect")
 async def connect_calendar(
     request: CalendarConnectRequest,
