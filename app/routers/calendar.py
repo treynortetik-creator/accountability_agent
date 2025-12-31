@@ -153,10 +153,6 @@ class CalendarConnectRequest(BaseModel):
     api_key: str  # Google Calendar API key
 
 
-class OAuthExchangeRequest(BaseModel):
-    code: str  # The authorization code from Google OAuth callback
-
-
 class CalendarSyncResponse(BaseModel):
     synced: int
     events: List[CalendarEventResponse]
@@ -186,8 +182,25 @@ async def sync_calendar(
     _: str = Depends(verify_api_key),
 ):
     """Manually trigger calendar sync from Google Calendar."""
+    import json
     from app.calendar_service import calendar_service
     from app.user_service import get_default_user
+    from app.db_models import ErrorLog
+
+    async def log_calendar_error(error_type: str, error_msg: str, context: dict = None):
+        """Log calendar errors to the database for visibility."""
+        try:
+            error_log = ErrorLog(
+                error_type=error_type,
+                error_message=error_msg,
+                context=json.dumps(context) if context else None,
+                source="google_calendar",
+                user_message=None,
+            )
+            db.add(error_log)
+            await db.flush()
+        except Exception as log_err:
+            logger.error(f"Failed to log calendar error: {log_err}")
 
     # Get user for multi-user support
     user = await get_default_user(db)
@@ -209,13 +222,40 @@ async def sync_calendar(
         token_setting = result.scalar_one_or_none()
 
     if not token_setting:
+        await log_calendar_error("CalendarSyncError", "No OAuth token found in database")
         raise HTTPException(
             status_code=400,
             detail="Google Calendar OAuth not configured. You need to complete the OAuth flow to connect your calendar."
         )
 
+    # Check token state
+    try:
+        token_data = json.loads(token_setting.value)
+        has_token = bool(token_data.get("token"))
+        has_refresh = bool(token_data.get("refresh_token"))
+        logger.info(f"Calendar sync - has_token: {has_token}, has_refresh_token: {has_refresh}")
+
+        if not has_token and not has_refresh:
+            await log_calendar_error(
+                "CalendarSyncError",
+                "OAuth tokens are null - authorization code was never exchanged",
+                {"client_id_present": bool(token_data.get("client_id"))}
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="OAuth tokens missing. Please disconnect and reconnect your calendar."
+            )
+    except json.JSONDecodeError as e:
+        await log_calendar_error("CalendarSyncError", f"Invalid token JSON: {e}")
+        raise HTTPException(status_code=400, detail="Invalid calendar configuration")
+
     is_configured = await calendar_service.is_configured(db, user)
     if not is_configured:
+        await log_calendar_error(
+            "CalendarSyncError",
+            "calendar_service.is_configured returned False",
+            {"has_token": has_token, "has_refresh": has_refresh}
+        )
         raise HTTPException(
             status_code=400,
             detail="Google Calendar credentials are invalid or expired. Please reconnect your calendar."
@@ -223,116 +263,14 @@ async def sync_calendar(
 
     try:
         synced_count = await calendar_service.sync_events(db, user=user)
+        logger.info(f"Calendar sync completed: {synced_count} events")
         if synced_count == 0:
             return {"status": "synced", "events_synced": 0, "message": "No events found in the next 14 days"}
         return {"status": "synced", "events_synced": synced_count}
     except Exception as e:
         logger.error(f"Calendar sync failed: {e}", exc_info=True)
+        await log_calendar_error("CalendarSyncException", str(e), {"phase": "sync_events"})
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
-
-
-@router.post("/exchange-code")
-async def exchange_oauth_code(
-    request: OAuthExchangeRequest,
-    db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
-):
-    """Exchange OAuth authorization code for access tokens.
-
-    This completes the OAuth flow by:
-    1. Getting the stored client_id and client_secret
-    2. Exchanging the auth code for access_token and refresh_token
-    3. Saving the tokens to the database
-    """
-    import json
-    from app.user_service import get_default_user
-
-    user = await get_default_user(db)
-
-    # Get existing OAuth config (should have client_id and client_secret)
-    result = await db.execute(
-        select(Settings).where(
-            Settings.user_id == user.id,
-            Settings.key == "google_calendar_token"
-        )
-    )
-    token_setting = result.scalar_one_or_none()
-
-    # Also check without user_id for backwards compatibility
-    if not token_setting:
-        result = await db.execute(
-            select(Settings).where(Settings.key == "google_calendar_token")
-        )
-        token_setting = result.scalar_one_or_none()
-
-    if not token_setting:
-        raise HTTPException(
-            status_code=400,
-            detail="No OAuth configuration found. Please configure client_id and client_secret first."
-        )
-
-    try:
-        token_data = json.loads(token_setting.value)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid token configuration in database")
-
-    client_id = token_data.get('client_id')
-    client_secret = token_data.get('client_secret')
-    redirect_uri = token_data.get('redirect_uri')
-
-    if not client_id or not client_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing client_id or client_secret in OAuth configuration"
-        )
-
-    # Exchange the code for tokens
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "code": request.code,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "redirect_uri": redirect_uri or "https://example.invalid/api/calendar/callback",
-                    "grant_type": "authorization_code",
-                }
-            )
-
-            if response.status_code != 200:
-                error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
-                error_msg = error_data.get('error_description', error_data.get('error', response.text))
-                logger.error(f"Google OAuth token exchange failed: {response.status_code} - {error_msg}")
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to exchange code: {error_msg}"
-                )
-
-            tokens = response.json()
-
-    except httpx.RequestError as e:
-        logger.error(f"Network error during token exchange: {e}")
-        raise HTTPException(status_code=500, detail=f"Network error: {str(e)}")
-
-    # Update token data with the new tokens
-    token_data['token'] = tokens.get('access_token')
-    token_data['refresh_token'] = tokens.get('refresh_token')
-    token_data['token_uri'] = 'https://oauth2.googleapis.com/token'
-
-    # Save updated tokens
-    token_setting.value = json.dumps(token_data)
-    await db.flush()
-    await db.commit()
-
-    logger.info(f"Successfully exchanged OAuth code for tokens")
-
-    return {
-        "status": "success",
-        "message": "OAuth tokens saved successfully. You can now sync your calendar.",
-        "has_access_token": bool(tokens.get('access_token')),
-        "has_refresh_token": bool(tokens.get('refresh_token')),
-    }
 
 
 @router.post("/connect")

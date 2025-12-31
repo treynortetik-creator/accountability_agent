@@ -367,12 +367,29 @@ async def exchange_calendar_code(
 ):
     """Exchange authorization code for tokens."""
     import json
+    from app.db_models import ErrorLog
+
+    async def log_calendar_error(error_type: str, error_msg: str, context: dict = None):
+        """Log calendar errors to the database for visibility."""
+        try:
+            error_log = ErrorLog(
+                error_type=error_type,
+                error_message=error_msg,
+                context=json.dumps(context) if context else None,
+                source="google_calendar",
+                user_message=None,
+            )
+            db.add(error_log)
+            await db.flush()
+        except Exception as log_err:
+            logger.error(f"Failed to log calendar error: {log_err}")
 
     # Get stored credentials
     result = await db.execute(select(Settings).where(Settings.key == "google_calendar_token"))
     setting = result.scalar_one_or_none()
 
     if not setting:
+        await log_calendar_error("CalendarExchangeError", "No credentials saved in database")
         raise HTTPException(status_code=400, detail="No credentials saved")
 
     token_data = json.loads(setting.value)
@@ -381,11 +398,14 @@ async def exchange_calendar_code(
     redirect_uri = token_data.get("redirect_uri", f"{request.base_url}api/calendar/callback")
 
     if not client_id or not client_secret:
+        await log_calendar_error("CalendarExchangeError", "Missing client_id or client_secret")
         raise HTTPException(status_code=400, detail="Missing client credentials")
+
+    logger.info(f"Exchanging OAuth code (length={len(data.code)}) with redirect_uri={redirect_uri}")
 
     # Exchange code for tokens
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
@@ -397,11 +417,25 @@ async def exchange_calendar_code(
                 },
             )
 
+            logger.info(f"Google token response status: {response.status_code}")
+
             if response.status_code != 200:
-                error_data = response.json()
-                return {"status": "error", "error": error_data.get("error_description", "Token exchange failed")}
+                try:
+                    error_data = response.json()
+                except:
+                    error_data = {"error": response.text}
+
+                error_msg = error_data.get("error_description", error_data.get("error", "Token exchange failed"))
+                logger.error(f"Google OAuth token exchange failed: {error_msg}")
+                await log_calendar_error(
+                    "CalendarTokenExchangeFailed",
+                    error_msg,
+                    {"status_code": response.status_code, "error_data": error_data, "redirect_uri": redirect_uri}
+                )
+                return {"status": "error", "error": error_msg}
 
             tokens = response.json()
+            logger.info(f"Got tokens - access_token: {'yes' if tokens.get('access_token') else 'no'}, refresh_token: {'yes' if tokens.get('refresh_token') else 'no'}")
 
             # Save the tokens
             token_data["token"] = tokens.get("access_token")
@@ -409,17 +443,30 @@ async def exchange_calendar_code(
             token_data["token_uri"] = "https://oauth2.googleapis.com/token"
 
             await set_setting(db, "google_calendar_token", json.dumps(token_data))
+            logger.info("Saved OAuth tokens to database")
 
             # Trigger initial calendar sync
             try:
                 from app.calendar_service import calendar_service
                 synced_count = await calendar_service.sync_events(db)
+                logger.info(f"Initial calendar sync completed: {synced_count} events")
                 return {"status": "connected", "message": f"Calendar connected! Synced {synced_count} events."}
             except Exception as sync_error:
-                logger.warning(f"Initial calendar sync failed: {sync_error}")
+                logger.warning(f"Initial calendar sync failed: {sync_error}", exc_info=True)
+                await log_calendar_error(
+                    "CalendarSyncError",
+                    str(sync_error),
+                    {"phase": "initial_sync"}
+                )
                 return {"status": "connected", "message": "Calendar connected. Sync will happen on next check-in."}
 
+    except httpx.TimeoutException as e:
+        logger.error(f"Timeout during token exchange: {e}")
+        await log_calendar_error("CalendarExchangeTimeout", str(e))
+        return {"status": "error", "error": "Request to Google timed out. Please try again."}
     except Exception as e:
+        logger.error(f"Exception during token exchange: {e}", exc_info=True)
+        await log_calendar_error("CalendarExchangeException", str(e))
         return {"status": "error", "error": str(e)}
 
 
