@@ -535,6 +535,17 @@ async def telegram_webhook(request: Request):
             if mood and isinstance(mood, dict):
                 mood_score = mood.get("mood_score")
                 energy_level = mood.get("energy_level")
+                # Convert energy_level to string if it's an integer
+                # Map: 1-2 = low, 3-4 = medium, 5 = high
+                if isinstance(energy_level, int):
+                    if energy_level <= 2:
+                        energy_level = "low"
+                    elif energy_level <= 4:
+                        energy_level = "medium"
+                    else:
+                        energy_level = "high"
+                elif energy_level is not None:
+                    energy_level = str(energy_level)
                 if mood_score or energy_level:
                     db.add(MoodLog(
                         user_id=user.id,
