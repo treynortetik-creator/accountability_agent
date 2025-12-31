@@ -103,14 +103,15 @@ async def try_handle_completion(db, message_text: str) -> tuple[bool, str | None
     commitment.completed_at = datetime.utcnow()
     await db.flush()
 
-    # Generate a conversational acknowledgment
-    acknowledgments = [
-        f"Nice. \"{commitment.title}\" is checked off. What's next?",
-        f"Done. \"{commitment.title}\" is off the board. Keep the momentum going.",
-        f"Good - \"{commitment.title}\" is complete. One less thing hanging over you. What are you tackling next?",
-        f"\"{commitment.title}\" - shipped. That's the pattern we're building. What's the next priority?",
-    ]
+    # Generate an enthusiastic acknowledgment
     import random
+    acknowledgments = [
+        f"Hell yes! \"{commitment.title}\" is done! That's what I'm talking about. What's next?",
+        f"Boom! \"{commitment.title}\" - shipped. Achievement unlocked. What else we killing today?",
+        f"Nice! \"{commitment.title}\" is off the board. You're on a fucking roll. What's next?",
+        f"\"{commitment.title}\" - done. *chef's kiss* What's the next quest?",
+        f"LFG! \"{commitment.title}\" complete. The Force is strong with you today. What's next?",
+    ]
     reply = random.choice(acknowledgments)
 
     return True, reply
@@ -205,15 +206,15 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
             due_str = due_date.strftime('%A, %b %d')
             if due_date.hour != 0 or due_date.minute != 0:
                 due_str += due_date.strftime(' at %I:%M %p').replace(' 0', ' ').lstrip('0')
-            return True, f"Alright, \"{pending.parsed_title}\" is locked in for {due_str}. I'll be watching. Don't make me chase you."
+            return True, f"Locked in! \"{pending.parsed_title}\" by {due_str}. You got this. 💪"
         else:
-            return True, f"Got it - \"{pending.parsed_title}\" is on the board. No deadline, but that doesn't mean you can let it rot. When are you shipping this?"
+            return True, f"Done! \"{pending.parsed_title}\" is on the board. When do you think you'll knock this out?"
 
     # Check for rejection
     elif text_lower in ["no", "n", "wrong", "nope", "cancel", "nevermind", "never mind"]:
         pending.status = "rejected"
         await db.flush()
-        return True, "Alright, scrapped. So what were you actually trying to say?"
+        return True, "No worries, scrapped. What were you actually going for?"
 
     # Not a confirmation response
     return False, None
@@ -276,9 +277,9 @@ async def try_parse_commitment(db, message_text: str, context: dict) -> tuple[bo
         due_str = due_datetime.strftime('%A, %b %d')
         time_str = due_datetime.strftime('%I:%M %p').lstrip('0').replace(' 0', ' ')
         due_str += f" at {time_str}"
-        confirmation = f'So you\'re committing to "{parsed["title"]}" by {due_str}? Just say yes to lock it in, or no if I got it wrong.'
+        confirmation = f'Cool, so "{parsed["title"]}" by {due_str}? Say yes and it\'s locked in.'
     else:
-        confirmation = f'Sounds like you want to commit to "{parsed["title"]}" - no deadline mentioned though. Want me to add this? (yes/no)'
+        confirmation = f'Got it - "{parsed["title"]}". No deadline though. Want me to track this one? (yes/no)'
 
     return True, confirmation
 
@@ -406,17 +407,50 @@ async def telegram_webhook(request: Request):
 
             # Process memory update if provided
             memory_update = analysis.get("memory_update")
-            if memory_update and isinstance(memory_update, str) and memory_update.strip():
-                # Save memory update to database
+            if memory_update:
+                # Handle both old format (string) and new format (dict with action)
                 memory_result = await db.execute(
                     select(SettingsModel).where(SettingsModel.key == "llm_memory")
                 )
                 memory_setting = memory_result.scalar_one_or_none()
-                if memory_setting:
-                    memory_setting.value = memory_update.strip()
+                current_memory = memory_setting.value if memory_setting else ""
+
+                if isinstance(memory_update, str) and memory_update.strip():
+                    # Old format - treat as replace for backwards compatibility
+                    new_memory = memory_update.strip()
+                elif isinstance(memory_update, dict):
+                    action = memory_update.get("action", "replace")
+                    content = memory_update.get("content", "").strip()
+
+                    if action == "append" and content:
+                        # Add to existing memory with a newline separator
+                        if current_memory:
+                            new_memory = f"{current_memory}\n{content}"
+                        else:
+                            new_memory = content
+                        logger.info(f"Appending to memory: {content[:50]}...")
+                    elif action == "remove" and content:
+                        # Remove specific content from memory
+                        new_memory = current_memory.replace(content, "").strip()
+                        # Clean up any double newlines
+                        while "\n\n\n" in new_memory:
+                            new_memory = new_memory.replace("\n\n\n", "\n\n")
+                        logger.info(f"Removed from memory: {content[:50]}...")
+                    elif action == "replace" and content:
+                        # Full replacement
+                        new_memory = content
+                        logger.info("Replacing entire memory")
+                    else:
+                        new_memory = None
                 else:
-                    db.add(SettingsModel(key="llm_memory", value=memory_update.strip()))
-                logger.info("LLM memory updated")
+                    new_memory = None
+
+                if new_memory is not None:
+                    if memory_setting:
+                        memory_setting.value = new_memory
+                    else:
+                        db.add(SettingsModel(key="llm_memory", value=new_memory))
+                    logger.info("LLM memory updated")
 
             # Process scheduled follow-up if provided
             followup = analysis.get("schedule_followup")
