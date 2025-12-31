@@ -22,10 +22,15 @@ def get_engine_kwargs():
 
     # PostgreSQL configuration (for Supabase/production)
     # Use NullPool for serverless environments like Railway
+    # CRITICAL: Disable prepared statements for Supabase pooler (Supavisor) compatibility
+    # Supavisor uses transaction pooling which doesn't support prepared statements
     return {
         "echo": settings.debug,
         "poolclass": NullPool,  # Better for serverless - no persistent connections
-        "pool_pre_ping": True,  # Verify connections are alive
+        "connect_args": {
+            "statement_cache_size": 0,  # Disable prepared statement cache for pooler
+            "prepared_statement_cache_size": 0,  # Disable prepared statements entirely
+        },
     }
 
 
@@ -51,10 +56,27 @@ async def init_db():
     Note: For Supabase, tables are managed via migrations.
     This is primarily used for local SQLite development.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Log database connection type for debugging
+    db_type = "postgresql" if "postgresql" in settings.database_url else "sqlite"
+    logger.info(f"Initializing database connection (type: {db_type})")
+
     # Only create tables if using SQLite (local dev)
     if settings.database_url.startswith("sqlite"):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+    else:
+        # For PostgreSQL, verify connection works
+        try:
+            from sqlalchemy import text
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT 1"))
+                logger.info("Database connection verified successfully")
+        except Exception as e:
+            logger.error(f"Database connection FAILED: {type(e).__name__}: {e}")
+            raise
 
 
 async def get_db() -> AsyncSession:

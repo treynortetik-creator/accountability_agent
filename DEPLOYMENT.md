@@ -14,7 +14,12 @@ Set these in your Railway project:
 
 ```bash
 # Database - USE THE POOLER CONNECTION (port 6543 for IPv4 compatibility)
-DATABASE_URL=postgresql+asyncpg://postgres.dztlwgrlvppxxrfgrfsq:[YOUR-PASSWORD]@aws-0-us-west-1.pooler.supabase.com:6543/postgres
+# IMPORTANT: If your password contains special characters, URL-encode them:
+#   ! = %21   @ = %40   # = %23   $ = %24   % = %25   & = %26
+DATABASE_URL=postgresql+asyncpg://postgres.dztlwgrlvppxxrfgrfsq:[YOUR-PASSWORD]@aws-0-us-west-2.pooler.supabase.com:6543/postgres
+
+# Example with password "MyPass123!":
+# DATABASE_URL=postgresql+asyncpg://postgres.dztlwgrlvppxxrfgrfsq:MyPass123%21@aws-0-us-west-2.pooler.supabase.com:6543/postgres
 
 # Get your password from Supabase Dashboard:
 # Settings > Database > Connection string > URI
@@ -50,6 +55,17 @@ The connection string format:
 ```
 postgresql+asyncpg://postgres.[PROJECT-REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres
 ```
+
+**URL encoding for special characters in password:**
+| Character | Encoded |
+|-----------|---------|
+| `!` | `%21` |
+| `@` | `%40` |
+| `#` | `%23` |
+| `$` | `%24` |
+| `%` | `%25` |
+| `&` | `%26` |
+| `+` | `%2B` |
 
 ## Getting Your Supabase Password
 
