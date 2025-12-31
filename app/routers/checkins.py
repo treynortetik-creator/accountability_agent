@@ -14,6 +14,7 @@ from app.models import (
     StatsResponse,
 )
 from app.config import get_settings
+from app.user_service import get_default_user
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
 settings = get_settings()
@@ -26,7 +27,14 @@ async def list_checkins(
     _: str = Depends(verify_api_key),
 ):
     """List recent check-ins."""
-    query = select(CheckIn).order_by(CheckIn.sent_at.desc()).limit(limit)
+    user = await get_default_user(db)
+
+    query = (
+        select(CheckIn)
+        .where(CheckIn.user_id == user.id)
+        .order_by(CheckIn.sent_at.desc())
+        .limit(limit)
+    )
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -38,7 +46,14 @@ async def list_responses(
     _: str = Depends(verify_api_key),
 ):
     """List recent responses."""
-    query = select(Response).order_by(Response.received_at.desc()).limit(limit)
+    user = await get_default_user(db)
+
+    query = (
+        select(Response)
+        .where(Response.user_id == user.id)
+        .order_by(Response.received_at.desc())
+        .limit(limit)
+    )
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -50,7 +65,9 @@ async def list_patterns(
     _: str = Depends(verify_api_key),
 ):
     """List detected patterns."""
-    query = select(Pattern)
+    user = await get_default_user(db)
+
+    query = select(Pattern).where(Pattern.user_id == user.id)
     if active_only:
         query = query.where(Pattern.is_active == True)
     query = query.order_by(Pattern.detected_at.desc())
@@ -64,12 +81,17 @@ async def get_stats(
     _: str = Depends(verify_api_key),
 ):
     """Get accountability statistics."""
+    user = await get_default_user(db)
+
     # Commitment stats
-    total_result = await db.execute(select(func.count(Commitment.id)))
+    total_result = await db.execute(
+        select(func.count(Commitment.id)).where(Commitment.user_id == user.id)
+    )
     total_commitments = total_result.scalar() or 0
 
     completed_result = await db.execute(
         select(func.count(Commitment.id)).where(
+            Commitment.user_id == user.id,
             Commitment.status == CommitmentStatus.COMPLETED
         )
     )
@@ -77,6 +99,7 @@ async def get_stats(
 
     failed_result = await db.execute(
         select(func.count(Commitment.id)).where(
+            Commitment.user_id == user.id,
             Commitment.status == CommitmentStatus.FAILED
         )
     )
@@ -84,6 +107,7 @@ async def get_stats(
 
     pending_result = await db.execute(
         select(func.count(Commitment.id)).where(
+            Commitment.user_id == user.id,
             Commitment.status == CommitmentStatus.PENDING
         )
     )
@@ -94,11 +118,16 @@ async def get_stats(
     )
 
     # Check-in stats
-    checkin_result = await db.execute(select(func.count(CheckIn.id)))
+    checkin_result = await db.execute(
+        select(func.count(CheckIn.id)).where(CheckIn.user_id == user.id)
+    )
     total_checkins = checkin_result.scalar() or 0
 
     responded_result = await db.execute(
-        select(func.count(CheckIn.id)).where(CheckIn.response_received == True)
+        select(func.count(CheckIn.id)).where(
+            CheckIn.user_id == user.id,
+            CheckIn.response_received == True
+        )
     )
     responded_checkins = responded_result.scalar() or 0
 
@@ -108,7 +137,9 @@ async def get_stats(
     avg_response_time = None
     checkins_with_response = await db.execute(
         select(CheckIn).where(
-            CheckIn.response_received == True, CheckIn.responded_at.isnot(None)
+            CheckIn.user_id == user.id,
+            CheckIn.response_received == True,
+            CheckIn.responded_at.isnot(None)
         )
     )
     checkins_list = checkins_with_response.scalars().all()
@@ -122,7 +153,10 @@ async def get_stats(
 
     # Active patterns
     patterns_result = await db.execute(
-        select(Pattern).where(Pattern.is_active == True)
+        select(Pattern).where(
+            Pattern.user_id == user.id,
+            Pattern.is_active == True
+        )
     )
     active_patterns = [
         PatternResponse.model_validate(p) for p in patterns_result.scalars().all()

@@ -5,12 +5,13 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select, and_
 from app.database import async_session_maker
-from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus, Settings as SettingsModel, ScheduledFollowup, MoodLog, ErrorLog
+from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus, Settings as SettingsModel, ScheduledFollowup, MoodLog, ErrorLog, User
 from app.telegram_bot import parse_telegram_update, telegram_service
 from app.llm import analyze_response, parse_commitment
 from app.scheduler import get_context
 from app.streaks import update_response_streak
 from app.config import get_settings
+from app.user_service import get_or_create_user
 import re
 import pytz
 
@@ -19,7 +20,7 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
-async def try_handle_completion(db, message_text: str) -> tuple[bool, str | None]:
+async def try_handle_completion(db, message_text: str, user: User) -> tuple[bool, str | None]:
     """Check if user is marking a commitment as complete.
 
     Handles phrases like:
@@ -60,6 +61,7 @@ async def try_handle_completion(db, message_text: str) -> tuple[bool, str | None
         result = await db.execute(
             select(Commitment).where(
                 and_(
+                    Commitment.user_id == user.id,
                     Commitment.status == CommitmentStatus.PENDING,
                     Commitment.title.ilike(f"%{subject}%"),
                 )
@@ -71,6 +73,7 @@ async def try_handle_completion(db, message_text: str) -> tuple[bool, str | None
             # No matching commitment found, try fuzzy match on most recent
             result = await db.execute(
                 select(Commitment).where(
+                    Commitment.user_id == user.id,
                     Commitment.status == CommitmentStatus.PENDING
                 ).order_by(Commitment.created_at.desc()).limit(5)
             )
@@ -90,6 +93,7 @@ async def try_handle_completion(db, message_text: str) -> tuple[bool, str | None
         # Simple "done" - mark most recent pending commitment
         result = await db.execute(
             select(Commitment).where(
+                Commitment.user_id == user.id,
                 Commitment.status == CommitmentStatus.PENDING
             ).order_by(Commitment.due_date.asc().nullslast(), Commitment.created_at.desc()).limit(1)
         )
@@ -119,7 +123,7 @@ async def try_handle_completion(db, message_text: str) -> tuple[bool, str | None
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
-async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str | None]:
+async def handle_pending_confirmation(db, message_text: str, user: User) -> tuple[bool, str | None]:
     """Check if user is confirming/rejecting a pending commitment parse.
 
     Returns (handled: bool, reply: str | None)
@@ -130,6 +134,7 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
     result = await db.execute(
         select(PendingCommitmentParse).where(
             and_(
+                PendingCommitmentParse.user_id == user.id,
                 PendingCommitmentParse.status.in_(["pending", "breakdown_pending"]),
                 PendingCommitmentParse.expires_at > datetime.utcnow(),
             )
@@ -167,6 +172,7 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
                         step_due = datetime.utcnow() + timedelta(hours=i+1)  # At least stagger by hour
 
                 commitment = Commitment(
+                    user_id=user.id,
                     title=step,
                     description=f"Part of: {pending.parsed_title}",
                     due_date=step_due,
@@ -190,6 +196,7 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
         # Create the commitment
         due_date = pending.parsed_due_date
         commitment = Commitment(
+            user_id=user.id,
             title=pending.parsed_title,
             description=pending.parsed_description,
             due_date=due_date,
@@ -206,7 +213,7 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
             due_str = due_date.strftime('%A, %b %d')
             if due_date.hour != 0 or due_date.minute != 0:
                 due_str += due_date.strftime(' at %I:%M %p').replace(' 0', ' ').lstrip('0')
-            return True, f"Locked in! \"{pending.parsed_title}\" by {due_str}. You got this. 💪"
+            return True, f"Locked in! \"{pending.parsed_title}\" by {due_str}. You got this."
         else:
             return True, f"Done! \"{pending.parsed_title}\" is on the board. When do you think you'll knock this out?"
 
@@ -220,7 +227,7 @@ async def handle_pending_confirmation(db, message_text: str) -> tuple[bool, str 
     return False, None
 
 
-async def try_parse_commitment(db, message_text: str, context: dict) -> tuple[bool, str | None]:
+async def try_parse_commitment(db, message_text: str, context: dict, user: User) -> tuple[bool, str | None]:
     """Try to parse a commitment from natural language.
 
     Returns (parsed: bool, reply: str | None)
@@ -261,6 +268,7 @@ async def try_parse_commitment(db, message_text: str, context: dict) -> tuple[bo
         breakdown_json = json_module.dumps(parsed["suggested_breakdown"])
 
     pending = PendingCommitmentParse(
+        user_id=user.id,
         original_message=message_text,
         parsed_title=parsed["title"],
         parsed_due_date=due_datetime,
@@ -300,17 +308,23 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     message_text = parsed["text"]
-    logger.info(f"Received message: {message_text[:50]}...")
+    chat_id = str(parsed.get("chat_id", ""))
+    display_name = parsed.get("first_name") or parsed.get("username")
+    logger.info(f"Received message from {chat_id}: {message_text[:50]}...")
 
     # STEP 1: Save user message IMMEDIATELY (separate transaction)
     # This ensures user messages are ALWAYS saved, even if processing fails
     async with async_session_maker() as db:
         try:
+            # Get or create user from Telegram chat_id
+            user = await get_or_create_user(db, chat_id, display_name)
+
             # Update response streak
-            await update_response_streak(db)
+            await update_response_streak(db, user)
 
             # Save user message to chat history
             user_chat_msg = ChatMessage(
+                user_id=user.id,
                 role="user",
                 content=message_text,
                 message_type="reply",
@@ -326,13 +340,34 @@ async def telegram_webhook(request: Request):
     # STEP 2: Process the message and generate response (separate transaction)
     async with async_session_maker() as db:
         try:
+            # Get user for this transaction
+            user = await get_or_create_user(db, chat_id, display_name)
+
+            # Check if user is marking a commitment as complete
+            handled, reply = await try_handle_completion(db, message_text, user)
+            if handled:
+                if reply:
+                    msg_id = await telegram_service.send_message(reply, ignore_quiet_hours=True)
+                    warden_chat_msg = ChatMessage(
+                        user_id=user.id,
+                        role="warden",
+                        content=reply,
+                        message_type="completion_confirm",
+                        telegram_message_id=msg_id,
+                    )
+                    db.add(warden_chat_msg)
+                await db.commit()
+                logger.info("Handled commitment completion")
+                return {"ok": True}
+
             # Check if this is a confirmation response to a pending commitment
-            handled, reply = await handle_pending_confirmation(db, message_text)
+            handled, reply = await handle_pending_confirmation(db, message_text, user)
             if handled:
                 if reply:
                     # Always respond to user messages, even during quiet hours
                     msg_id = await telegram_service.send_message(reply, ignore_quiet_hours=True)
                     warden_chat_msg = ChatMessage(
+                        user_id=user.id,
                         role="warden",
                         content=reply,
                         message_type="commitment_confirm",
@@ -344,15 +379,16 @@ async def telegram_webhook(request: Request):
                 return {"ok": True}
 
             # Build context for analysis
-            context = await get_context(db)
+            context = await get_context(db, user)
 
             # Try to parse as a commitment first
-            parsed_commitment, commit_reply = await try_parse_commitment(db, message_text, context)
+            parsed_commitment, commit_reply = await try_parse_commitment(db, message_text, context, user)
             if parsed_commitment:
                 if commit_reply:
                     # Always respond to user messages, even during quiet hours
                     msg_id = await telegram_service.send_message(commit_reply, ignore_quiet_hours=True)
                     warden_chat_msg = ChatMessage(
+                        user_id=user.id,
                         role="warden",
                         content=commit_reply,
                         message_type="commitment_confirm",
@@ -363,21 +399,21 @@ async def telegram_webhook(request: Request):
                 logger.info("Parsed and handled commitment")
                 return {"ok": True}
 
-            # Find the most recent unanswered check-in
+            # Find the most recent unanswered check-in for this user
             recent_checkin = await db.execute(
                 select(CheckIn)
-                .where(CheckIn.response_received == False)
+                .where(CheckIn.user_id == user.id, CheckIn.response_received == False)
                 .order_by(CheckIn.sent_at.desc())
                 .limit(1)
             )
             checkin = recent_checkin.scalar_one_or_none()
 
-            # Calculate days since last shipped
+            # Calculate days since last shipped for this user
             from app.db_models import CommitmentStatus
 
             last_shipped = await db.execute(
                 select(Commitment)
-                .where(Commitment.status == CommitmentStatus.COMPLETED)
+                .where(Commitment.user_id == user.id, Commitment.status == CommitmentStatus.COMPLETED)
                 .order_by(Commitment.completed_at.desc())
                 .limit(1)
             )
@@ -390,9 +426,10 @@ async def telegram_webhook(request: Request):
                 days_since_shipped = "never"
             context["days_since_shipped"] = days_since_shipped
 
-            # Fetch recent chat history for context
+            # Fetch recent chat history for context (for this user)
             chat_history_result = await db.execute(
                 select(ChatMessage)
+                .where(ChatMessage.user_id == user.id)
                 .order_by(ChatMessage.created_at.desc())
                 .limit(20)
             )
@@ -410,7 +447,10 @@ async def telegram_webhook(request: Request):
             if memory_update:
                 # Handle both old format (string) and new format (dict with action)
                 memory_result = await db.execute(
-                    select(SettingsModel).where(SettingsModel.key == "llm_memory")
+                    select(SettingsModel).where(
+                        SettingsModel.user_id == user.id,
+                        SettingsModel.key == "llm_memory"
+                    )
                 )
                 memory_setting = memory_result.scalar_one_or_none()
                 current_memory = memory_setting.value if memory_setting else ""
@@ -449,7 +489,7 @@ async def telegram_webhook(request: Request):
                     if memory_setting:
                         memory_setting.value = new_memory
                     else:
-                        db.add(SettingsModel(key="llm_memory", value=new_memory))
+                        db.add(SettingsModel(user_id=user.id, key="llm_memory", value=new_memory))
                     logger.info("LLM memory updated")
 
             # Process scheduled follow-up if provided
@@ -483,6 +523,7 @@ async def telegram_webhook(request: Request):
                 scheduled_time_utc = scheduled_time.astimezone(pytz.UTC).replace(tzinfo=None)
 
                 db.add(ScheduledFollowup(
+                    user_id=user.id,
                     topic=followup["topic"],
                     reason=followup.get("reason"),
                     scheduled_time=scheduled_time_utc,
@@ -496,6 +537,7 @@ async def telegram_webhook(request: Request):
                 energy_level = mood.get("energy_level")
                 if mood_score or energy_level:
                     db.add(MoodLog(
+                        user_id=user.id,
                         mood_score=mood_score,
                         energy_level=energy_level,
                         detected_from="llm_analysis",
@@ -507,7 +549,10 @@ async def telegram_webhook(request: Request):
             suggested_intensity = analysis.get("suggested_intensity")
             if suggested_intensity and isinstance(suggested_intensity, int) and 1 <= suggested_intensity <= 5:
                 intensity_result = await db.execute(
-                    select(SettingsModel).where(SettingsModel.key == "accountability_intensity")
+                    select(SettingsModel).where(
+                        SettingsModel.user_id == user.id,
+                        SettingsModel.key == "accountability_intensity"
+                    )
                 )
                 intensity_setting = intensity_result.scalar_one_or_none()
                 if intensity_setting:
@@ -516,11 +561,12 @@ async def telegram_webhook(request: Request):
                         intensity_setting.value = str(suggested_intensity)
                         logger.info(f"Adjusted accountability intensity: {current} -> {suggested_intensity}")
                 else:
-                    db.add(SettingsModel(key="accountability_intensity", value=str(suggested_intensity)))
+                    db.add(SettingsModel(user_id=user.id, key="accountability_intensity", value=str(suggested_intensity)))
                     logger.info(f"Set accountability intensity to {suggested_intensity}")
 
             # Create response record
             response = Response(
+                user_id=user.id,
                 check_in_id=checkin.id if checkin else None,
                 message_text=message_text,
                 telegram_message_id=parsed["message_id"],
@@ -548,6 +594,7 @@ async def telegram_webhook(request: Request):
             msg_id = await telegram_service.send_message(reply, ignore_quiet_hours=True)
             # Save warden reply to chat history
             warden_chat_msg = ChatMessage(
+                user_id=user.id,
                 role="warden",
                 content=reply,
                 message_type="reply",
@@ -571,7 +618,15 @@ async def telegram_webhook(request: Request):
             # Log the error to database for UI visibility
             try:
                 async with async_session_maker() as error_db:
+                    # Try to get user for error logging (may fail if user was the issue)
+                    error_user = None
+                    try:
+                        error_user = await get_or_create_user(error_db, chat_id, display_name)
+                    except Exception:
+                        pass  # Log error without user_id
+
                     error_log = ErrorLog(
+                        user_id=error_user.id if error_user else None,
                         error_type=type(e).__name__,
                         error_message=str(e),
                         stack_trace=error_trace,
@@ -595,7 +650,15 @@ async def telegram_webhook(request: Request):
                 msg_id = await telegram_service.send_message(error_reply, ignore_quiet_hours=True)
                 # Save the error reply in a new transaction
                 async with async_session_maker() as error_db:
+                    # Try to get user for chat message logging
+                    error_user = None
+                    try:
+                        error_user = await get_or_create_user(error_db, chat_id, display_name)
+                    except Exception:
+                        pass  # Log without user_id
+
                     error_chat_msg = ChatMessage(
+                        user_id=error_user.id if error_user else None,
                         role="warden",
                         content=error_reply,
                         message_type="error",

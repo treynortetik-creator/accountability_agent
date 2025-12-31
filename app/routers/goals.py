@@ -8,6 +8,7 @@ from app.database import get_db
 from app.auth import verify_api_key
 from app.db_models import Goal
 from app.models import GoalCreate, GoalUpdate, GoalResponse
+from app.user_service import get_default_user
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -18,8 +19,10 @@ async def list_goals(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
-    """List all goals."""
-    query = select(Goal)
+    """List all goals for the current user."""
+    user = await get_default_user(db)
+
+    query = select(Goal).where(Goal.user_id == user.id)
     if active_only:
         query = query.where(Goal.is_active == True)
     query = query.order_by(Goal.created_at.desc())
@@ -35,7 +38,9 @@ async def create_goal(
     _: str = Depends(verify_api_key),
 ):
     """Create a new goal."""
-    db_goal = Goal(**goal.model_dump())
+    user = await get_default_user(db)
+
+    db_goal = Goal(user_id=user.id, **goal.model_dump())
     db.add(db_goal)
     await db.flush()
     await db.refresh(db_goal)
@@ -49,7 +54,11 @@ async def get_goal(
     _: str = Depends(verify_api_key),
 ):
     """Get a specific goal."""
-    result = await db.execute(select(Goal).where(Goal.id == goal_id))
+    user = await get_default_user(db)
+
+    result = await db.execute(
+        select(Goal).where(Goal.id == goal_id, Goal.user_id == user.id)
+    )
     goal = result.scalar_one_or_none()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
@@ -64,7 +73,11 @@ async def update_goal(
     _: str = Depends(verify_api_key),
 ):
     """Update a goal."""
-    result = await db.execute(select(Goal).where(Goal.id == goal_id))
+    user = await get_default_user(db)
+
+    result = await db.execute(
+        select(Goal).where(Goal.id == goal_id, Goal.user_id == user.id)
+    )
     goal = result.scalar_one_or_none()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
@@ -85,7 +98,11 @@ async def delete_goal(
     _: str = Depends(verify_api_key),
 ):
     """Delete a goal (soft delete - marks as inactive)."""
-    result = await db.execute(select(Goal).where(Goal.id == goal_id))
+    user = await get_default_user(db)
+
+    result = await db.execute(
+        select(Goal).where(Goal.id == goal_id, Goal.user_id == user.id)
+    )
     goal = result.scalar_one_or_none()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")

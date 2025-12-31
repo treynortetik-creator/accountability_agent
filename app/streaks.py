@@ -7,20 +7,24 @@ from typing import Dict, Any, Optional
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db_models import Streak, Commitment, CommitmentStatus
+from app.db_models import Streak, Commitment, CommitmentStatus, User
 
 logger = logging.getLogger(__name__)
 
 
-async def get_or_create_streak(db: AsyncSession, streak_type: str) -> Streak:
-    """Get or create a streak record."""
+async def get_or_create_streak(db: AsyncSession, streak_type: str, user: User) -> Streak:
+    """Get or create a streak record for a user."""
     result = await db.execute(
-        select(Streak).where(Streak.streak_type == streak_type)
+        select(Streak).where(
+            Streak.user_id == user.id,
+            Streak.streak_type == streak_type
+        )
     )
     streak = result.scalar_one_or_none()
 
     if not streak:
         streak = Streak(
+            user_id=user.id,
             streak_type=streak_type,
             current_count=0,
             best_count=0,
@@ -31,13 +35,13 @@ async def get_or_create_streak(db: AsyncSession, streak_type: str) -> Streak:
     return streak
 
 
-async def update_response_streak(db: AsyncSession) -> Dict[str, Any]:
+async def update_response_streak(db: AsyncSession, user: User) -> Dict[str, Any]:
     """Update the response streak when user responds to a check-in.
 
     Call this when user responds to any check-in.
     Returns the updated streak info.
     """
-    streak = await get_or_create_streak(db, "response")
+    streak = await get_or_create_streak(db, "response", user)
     today = datetime.utcnow().date()
 
     if streak.last_activity_date:
@@ -72,12 +76,12 @@ async def update_response_streak(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
-async def check_response_streak_broken(db: AsyncSession) -> bool:
+async def check_response_streak_broken(db: AsyncSession, user: User) -> bool:
     """Check if the response streak was broken (missed a day).
 
     Returns True if streak was broken since last check.
     """
-    streak = await get_or_create_streak(db, "response")
+    streak = await get_or_create_streak(db, "response", user)
 
     if not streak.last_activity_date:
         return False
@@ -98,29 +102,31 @@ async def check_response_streak_broken(db: AsyncSession) -> bool:
     return False
 
 
-async def update_completion_streak(db: AsyncSession) -> Dict[str, Any]:
+async def update_completion_streak(db: AsyncSession, user: User) -> Dict[str, Any]:
     """Update the weekly completion streak.
 
     Call this during weekly review to check if >80% was completed.
     Returns the updated streak info.
     """
-    streak = await get_or_create_streak(db, "completion")
+    streak = await get_or_create_streak(db, "completion", user)
 
     # Calculate this week's completion rate
     week_ago = datetime.utcnow() - timedelta(days=7)
 
-    # Count commitments created or due this week
+    # Count commitments created or due this week for this user
     total_result = await db.execute(
         select(func.count(Commitment.id)).where(
+            Commitment.user_id == user.id,
             Commitment.created_at > week_ago
         )
     )
     total = total_result.scalar() or 0
 
-    # Count completed this week
+    # Count completed this week for this user
     completed_result = await db.execute(
         select(func.count(Commitment.id)).where(
             and_(
+                Commitment.user_id == user.id,
                 Commitment.status == CommitmentStatus.COMPLETED,
                 Commitment.completed_at > week_ago,
             )
@@ -163,16 +169,17 @@ async def update_completion_streak(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
-async def get_streak_context(db: AsyncSession) -> Dict[str, Any]:
+async def get_streak_context(db: AsyncSession, user: User) -> Dict[str, Any]:
     """Get streak context for LLM prompts and dashboard."""
-    response_streak = await get_or_create_streak(db, "response")
-    completion_streak = await get_or_create_streak(db, "completion")
+    response_streak = await get_or_create_streak(db, "response", user)
+    completion_streak = await get_or_create_streak(db, "completion", user)
 
     # Calculate current week's completion rate
     week_ago = datetime.utcnow() - timedelta(days=7)
 
     total_result = await db.execute(
         select(func.count(Commitment.id)).where(
+            Commitment.user_id == user.id,
             Commitment.created_at > week_ago
         )
     )
@@ -181,6 +188,7 @@ async def get_streak_context(db: AsyncSession) -> Dict[str, Any]:
     completed_result = await db.execute(
         select(func.count(Commitment.id)).where(
             and_(
+                Commitment.user_id == user.id,
                 Commitment.status == CommitmentStatus.COMPLETED,
                 Commitment.completed_at > week_ago,
             )
@@ -204,12 +212,12 @@ async def get_streak_context(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
-async def get_streak_message(db: AsyncSession) -> Optional[str]:
+async def get_streak_message(db: AsyncSession, user: User) -> Optional[str]:
     """Generate a streak-related message snippet for The Warden to use.
 
     Returns a message snippet or None if nothing noteworthy.
     """
-    context = await get_streak_context(db)
+    context = await get_streak_context(db, user)
 
     messages = []
 

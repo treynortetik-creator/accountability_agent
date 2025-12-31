@@ -9,6 +9,7 @@ from app.database import get_db
 from app.auth import verify_api_key
 from app.db_models import Commitment, CommitmentStatus
 from app.models import CommitmentCreate, CommitmentUpdate, CommitmentResponse
+from app.user_service import get_default_user
 
 router = APIRouter(prefix="/commitments", tags=["commitments"])
 
@@ -22,7 +23,9 @@ async def list_commitments(
     _: str = Depends(verify_api_key),
 ):
     """List commitments with optional filters."""
-    query = select(Commitment)
+    user = await get_default_user(db)
+
+    query = select(Commitment).where(Commitment.user_id == user.id)
 
     if status_filter:
         query = query.where(Commitment.status == status_filter)
@@ -42,7 +45,9 @@ async def create_commitment(
     _: str = Depends(verify_api_key),
 ):
     """Create a new commitment."""
-    db_commitment = Commitment(**commitment.model_dump())
+    user = await get_default_user(db)
+
+    db_commitment = Commitment(user_id=user.id, **commitment.model_dump())
     db.add(db_commitment)
     await db.flush()
     await db.refresh(db_commitment)
@@ -56,8 +61,13 @@ async def get_commitment(
     _: str = Depends(verify_api_key),
 ):
     """Get a specific commitment."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(Commitment).where(Commitment.id == commitment_id)
+        select(Commitment).where(
+            Commitment.id == commitment_id,
+            Commitment.user_id == user.id
+        )
     )
     commitment = result.scalar_one_or_none()
     if not commitment:
@@ -74,8 +84,13 @@ async def update_commitment(
     _: str = Depends(verify_api_key),
 ):
     """Update a commitment."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(Commitment).where(Commitment.id == commitment_id)
+        select(Commitment).where(
+            Commitment.id == commitment_id,
+            Commitment.user_id == user.id
+        )
     )
     commitment = result.scalar_one_or_none()
     if not commitment:
@@ -106,8 +121,13 @@ async def complete_commitment(
     _: str = Depends(verify_api_key),
 ):
     """Mark a commitment as completed."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(Commitment).where(Commitment.id == commitment_id)
+        select(Commitment).where(
+            Commitment.id == commitment_id,
+            Commitment.user_id == user.id
+        )
     )
     commitment = result.scalar_one_or_none()
     if not commitment:
@@ -128,8 +148,13 @@ async def fail_commitment(
     _: str = Depends(verify_api_key),
 ):
     """Mark a commitment as failed."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(Commitment).where(Commitment.id == commitment_id)
+        select(Commitment).where(
+            Commitment.id == commitment_id,
+            Commitment.user_id == user.id
+        )
     )
     commitment = result.scalar_one_or_none()
     if not commitment:
@@ -150,8 +175,13 @@ async def defer_commitment(
     _: str = Depends(verify_api_key),
 ):
     """Defer a commitment (tracks deferral count)."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(Commitment).where(Commitment.id == commitment_id)
+        select(Commitment).where(
+            Commitment.id == commitment_id,
+            Commitment.user_id == user.id
+        )
     )
     commitment = result.scalar_one_or_none()
     if not commitment:
@@ -174,8 +204,13 @@ async def delete_commitment(
     _: str = Depends(verify_api_key),
 ):
     """Delete a commitment."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(Commitment).where(Commitment.id == commitment_id)
+        select(Commitment).where(
+            Commitment.id == commitment_id,
+            Commitment.user_id == user.id
+        )
     )
     commitment = result.scalar_one_or_none()
     if not commitment:

@@ -12,6 +12,7 @@ from app.db_models import (
     CheckIn,
     Response,
     Pattern,
+    User,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,8 +21,9 @@ logger = logging.getLogger(__name__)
 class PatternDetector:
     """Detects behavioral patterns from user data."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, user: User):
         self.db = db
+        self.user = user
 
     async def run_detection(self) -> List[Dict[str, Any]]:
         """Run all pattern detection algorithms.
@@ -48,6 +50,7 @@ class PatternDetector:
         result = await self.db.execute(
             select(Commitment).where(
                 and_(
+                    Commitment.user_id == self.user.id,
                     Commitment.status == CommitmentStatus.PENDING,
                     Commitment.created_at < week_ago,
                 )
@@ -61,6 +64,7 @@ class PatternDetector:
             existing = await self.db.execute(
                 select(Pattern).where(
                     and_(
+                        Pattern.user_id == self.user.id,
                         Pattern.pattern_type == "avoidance",
                         Pattern.detected_at > recent_check,
                         Pattern.is_active == True,
@@ -70,6 +74,7 @@ class PatternDetector:
             if not existing.scalar_one_or_none():
                 titles = [c.title for c in old_pending[:5]]
                 pattern = Pattern(
+                    user_id=self.user.id,
                     pattern_type="avoidance",
                     description=f"Avoiding {len(old_pending)} tasks for over a week",
                     evidence=json.dumps({"stale_commitments": titles}),
@@ -93,6 +98,7 @@ class PatternDetector:
         result = await self.db.execute(
             select(CheckIn).where(
                 and_(
+                    CheckIn.user_id == self.user.id,
                     CheckIn.sent_at > week_ago,
                     CheckIn.response_received == False,
                 )
@@ -101,7 +107,10 @@ class PatternDetector:
         unanswered = result.scalars().all()
 
         total_result = await self.db.execute(
-            select(func.count(CheckIn.id)).where(CheckIn.sent_at > week_ago)
+            select(func.count(CheckIn.id)).where(
+                CheckIn.user_id == self.user.id,
+                CheckIn.sent_at > week_ago
+            )
         )
         total_recent = total_result.scalar() or 0
 
@@ -111,6 +120,7 @@ class PatternDetector:
             existing = await self.db.execute(
                 select(Pattern).where(
                     and_(
+                        Pattern.user_id == self.user.id,
                         Pattern.pattern_type == "silence",
                         Pattern.detected_at > recent_check,
                         Pattern.is_active == True,
@@ -119,6 +129,7 @@ class PatternDetector:
             )
             if not existing.scalar_one_or_none():
                 pattern = Pattern(
+                    user_id=self.user.id,
                     pattern_type="silence",
                     description=f"Ignoring check-ins: {len(unanswered)}/{total_recent} unanswered this week",
                     evidence=json.dumps({
@@ -145,6 +156,7 @@ class PatternDetector:
         result = await self.db.execute(
             select(func.count(Response.id)).where(
                 and_(
+                    Response.user_id == self.user.id,
                     Response.received_at > two_weeks_ago,
                     Response.detected_excuse == True,
                 )
@@ -157,6 +169,7 @@ class PatternDetector:
             existing = await self.db.execute(
                 select(Pattern).where(
                     and_(
+                        Pattern.user_id == self.user.id,
                         Pattern.pattern_type == "excuse",
                         Pattern.detected_at > recent_check,
                         Pattern.is_active == True,
@@ -165,6 +178,7 @@ class PatternDetector:
             )
             if not existing.scalar_one_or_none():
                 pattern = Pattern(
+                    user_id=self.user.id,
                     pattern_type="excuse",
                     description=f"Making excuses: {excuse_count} excuse-laden responses in 2 weeks",
                     evidence=json.dumps({"excuse_count": excuse_count}),
@@ -183,9 +197,12 @@ class PatternDetector:
         """Detect when user is deferring the same tasks repeatedly."""
         detected = []
 
-        # Find commitments deferred multiple times
+        # Find commitments deferred multiple times for this user
         result = await self.db.execute(
-            select(Commitment).where(Commitment.deferred_count >= 2)
+            select(Commitment).where(
+                Commitment.user_id == self.user.id,
+                Commitment.deferred_count >= 2
+            )
         )
         chronic_deferrals = result.scalars().all()
 
@@ -196,6 +213,7 @@ class PatternDetector:
                     existing = await self.db.execute(
                         select(Pattern).where(
                             and_(
+                                Pattern.user_id == self.user.id,
                                 Pattern.pattern_type == "deferral",
                                 Pattern.evidence.contains(str(commitment.id)),
                                 Pattern.is_active == True,
@@ -204,6 +222,7 @@ class PatternDetector:
                     )
                     if not existing.scalar_one_or_none():
                         pattern = Pattern(
+                            user_id=self.user.id,
                             pattern_type="deferral",
                             description=f"Serial deferral: '{commitment.title}' deferred {commitment.deferred_count} times",
                             evidence=json.dumps({
@@ -226,11 +245,12 @@ class PatternDetector:
         """Detect positive consistency (shipping regularly)."""
         detected = []
 
-        # Count completions in the last 2 weeks
+        # Count completions in the last 2 weeks for this user
         two_weeks_ago = datetime.utcnow() - timedelta(days=14)
         result = await self.db.execute(
             select(func.count(Commitment.id)).where(
                 and_(
+                    Commitment.user_id == self.user.id,
                     Commitment.status == CommitmentStatus.COMPLETED,
                     Commitment.completed_at > two_weeks_ago,
                 )
@@ -238,9 +258,12 @@ class PatternDetector:
         )
         completed_count = result.scalar() or 0
 
-        # Check response rate
+        # Check response rate for this user
         checkin_result = await self.db.execute(
-            select(CheckIn).where(CheckIn.sent_at > two_weeks_ago)
+            select(CheckIn).where(
+                CheckIn.user_id == self.user.id,
+                CheckIn.sent_at > two_weeks_ago
+            )
         )
         checkins = checkin_result.scalars().all()
         response_rate = (
@@ -255,6 +278,7 @@ class PatternDetector:
             existing = await self.db.execute(
                 select(Pattern).where(
                     and_(
+                        Pattern.user_id == self.user.id,
                         Pattern.pattern_type == "consistency",
                         Pattern.detected_at > recent_check,
                         Pattern.is_active == True,
@@ -263,6 +287,7 @@ class PatternDetector:
             )
             if not existing.scalar_one_or_none():
                 pattern = Pattern(
+                    user_id=self.user.id,
                     pattern_type="consistency",
                     description=f"Consistent execution: {completed_count} items shipped, {response_rate*100:.0f}% response rate",
                     evidence=json.dumps({
@@ -281,20 +306,24 @@ class PatternDetector:
         return detected
 
     async def get_active_patterns(self) -> List[Pattern]:
-        """Get all currently active patterns."""
+        """Get all currently active patterns for this user."""
         result = await self.db.execute(
-            select(Pattern).where(Pattern.is_active == True).order_by(
+            select(Pattern).where(
+                Pattern.user_id == self.user.id,
+                Pattern.is_active == True
+            ).order_by(
                 Pattern.severity.desc(), Pattern.detected_at.desc()
             )
         )
         return result.scalars().all()
 
     async def deactivate_old_patterns(self, days: int = 14):
-        """Deactivate patterns older than specified days."""
+        """Deactivate patterns older than specified days for this user."""
         cutoff = datetime.utcnow() - timedelta(days=days)
         result = await self.db.execute(
             select(Pattern).where(
                 and_(
+                    Pattern.user_id == self.user.id,
                     Pattern.is_active == True,
                     Pattern.detected_at < cutoff,
                 )

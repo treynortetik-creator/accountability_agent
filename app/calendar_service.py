@@ -15,7 +15,7 @@ from googleapiclient.errors import HttpError
 from sqlalchemy import select, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db_models import CalendarEvent, Settings
+from app.db_models import CalendarEvent, Settings, User
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -35,21 +35,29 @@ class CalendarService:
         self._service = None
         self._credentials = None
 
-    async def is_configured(self, db: AsyncSession) -> bool:
+    async def is_configured(self, db: AsyncSession, user: User = None) -> bool:
         """Check if Google Calendar is configured with valid credentials."""
         try:
-            creds = await self._get_credentials(db)
+            creds = await self._get_credentials(db, user)
             return creds is not None and creds.valid
         except Exception:
             return False
 
-    async def _get_credentials(self, db: AsyncSession) -> Optional[Credentials]:
+    async def _get_credentials(self, db: AsyncSession, user: User = None) -> Optional[Credentials]:
         """Get and refresh credentials from database."""
         try:
-            # Get stored token
-            result = await db.execute(
-                select(Settings).where(Settings.key == "google_calendar_token")
-            )
+            # Get stored token (filtered by user if provided)
+            if user:
+                result = await db.execute(
+                    select(Settings).where(
+                        Settings.user_id == user.id,
+                        Settings.key == "google_calendar_token"
+                    )
+                )
+            else:
+                result = await db.execute(
+                    select(Settings).where(Settings.key == "google_calendar_token")
+                )
             token_setting = result.scalar_one_or_none()
 
             if not token_setting:
@@ -108,9 +116,9 @@ class CalendarService:
             self._credentials = creds
         return self._service
 
-    async def sync_events(self, db: AsyncSession, days_ahead: int = 14) -> int:
+    async def sync_events(self, db: AsyncSession, days_ahead: int = 14, user: User = None) -> int:
         """Sync calendar events from Google Calendar."""
-        creds = await self._get_credentials(db)
+        creds = await self._get_credentials(db, user)
         if not creds:
             return 0
 
@@ -220,57 +228,68 @@ class CalendarService:
             logger.error(f"Failed to sync calendar: {e}")
             return 0
 
-    async def get_upcoming_events(self, db: AsyncSession, hours_ahead: int = 2) -> List[CalendarEvent]:
+    async def get_upcoming_events(self, db: AsyncSession, hours_ahead: int = 2, user: User = None) -> List[CalendarEvent]:
         """Get events happening in the next N hours."""
         tz = pytz.timezone(settings.timezone)
         now = datetime.now(tz).replace(tzinfo=None)
         cutoff = now + timedelta(hours=hours_ahead)
 
-        result = await db.execute(
-            select(CalendarEvent).where(
-                and_(
-                    CalendarEvent.start_time >= now,
-                    CalendarEvent.start_time <= cutoff,
-                    CalendarEvent.all_day == False,
-                )
-            ).order_by(CalendarEvent.start_time)
+        query = select(CalendarEvent).where(
+            and_(
+                CalendarEvent.start_time >= now,
+                CalendarEvent.start_time <= cutoff,
+                CalendarEvent.all_day == False,
+            )
         )
+
+        # Filter by user if provided
+        if user:
+            query = query.where(CalendarEvent.user_id == user.id)
+
+        result = await db.execute(query.order_by(CalendarEvent.start_time))
         return result.scalars().all()
 
-    async def is_ooo_today(self, db: AsyncSession) -> bool:
-        """Check if there's an all-day OOO event today."""
+    async def is_ooo_today(self, db: AsyncSession, user: User = None) -> bool:
+        """Check if there's an all-day OOO event today for a user."""
         tz = pytz.timezone(settings.timezone)
         today = datetime.now(tz).date()
         today_start = datetime.combine(today, datetime.min.time())
         today_end = datetime.combine(today, datetime.max.time())
 
-        result = await db.execute(
-            select(CalendarEvent).where(
-                and_(
-                    CalendarEvent.all_day == True,
-                    CalendarEvent.is_ooo == True,
-                    CalendarEvent.start_time <= today_end,
-                    CalendarEvent.end_time >= today_start if CalendarEvent.end_time else True,
-                )
+        query = select(CalendarEvent).where(
+            and_(
+                CalendarEvent.all_day == True,
+                CalendarEvent.is_ooo == True,
+                CalendarEvent.start_time <= today_end,
             )
         )
+
+        # Filter by user if provided
+        if user:
+            query = query.where(CalendarEvent.user_id == user.id)
+
+        result = await db.execute(query)
         return result.scalar_one_or_none() is not None
 
-    async def get_weekly_meeting_hours(self, db: AsyncSession) -> float:
+    async def get_weekly_meeting_hours(self, db: AsyncSession, user: User = None) -> float:
         """Calculate total meeting hours in the past week."""
         tz = pytz.timezone(settings.timezone)
         now = datetime.now(tz).replace(tzinfo=None)
         week_ago = now - timedelta(days=7)
 
-        result = await db.execute(
-            select(CalendarEvent).where(
-                and_(
-                    CalendarEvent.start_time >= week_ago,
-                    CalendarEvent.start_time <= now,
-                    CalendarEvent.all_day == False,
-                )
+        query = select(CalendarEvent).where(
+            and_(
+                CalendarEvent.start_time >= week_ago,
+                CalendarEvent.start_time <= now,
+                CalendarEvent.all_day == False,
             )
         )
+
+        # Filter by user if provided
+        if user:
+            query = query.where(CalendarEvent.user_id == user.id)
+
+        result = await db.execute(query)
         events = result.scalars().all()
 
         total_hours = 0.0
@@ -281,9 +300,9 @@ class CalendarService:
 
         return round(total_hours, 1)
 
-    async def get_calendar_context(self, db: AsyncSession) -> Dict[str, Any]:
+    async def get_calendar_context(self, db: AsyncSession, user: User = None) -> Dict[str, Any]:
         """Get calendar context for LLM prompts."""
-        is_configured = await self.is_configured(db)
+        is_configured = await self.is_configured(db, user)
 
         if not is_configured:
             return {
@@ -294,11 +313,11 @@ class CalendarService:
             }
 
         # Sync events first (if not synced recently)
-        await self.sync_events(db)
+        await self.sync_events(db, user=user)
 
-        upcoming = await self.get_upcoming_events(db, hours_ahead=2)
-        is_ooo = await self.is_ooo_today(db)
-        meeting_hours = await self.get_weekly_meeting_hours(db)
+        upcoming = await self.get_upcoming_events(db, hours_ahead=2, user=user)
+        is_ooo = await self.is_ooo_today(db, user)
+        meeting_hours = await self.get_weekly_meeting_hours(db, user=user)
 
         return {
             "calendar_configured": True,

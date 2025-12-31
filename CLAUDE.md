@@ -5,19 +5,15 @@ An AI-powered accountability agent that helps users stay on track with their goa
 
 ## Supabase MCP Configuration
 
-### CRITICAL: Which Database to Use
+### Database: The Warden
 
-| Project Name | Project Ref | Purpose | USE FOR THIS PROJECT? |
-|--------------|-------------|---------|----------------------|
-| **The Warden** | `dztlwgrlvppxxrfgrfsq` | Accountability Agent database | **YES - USE THIS ONE** |
-| **Still** | `tvlvnplhybumuoiflthb` | Content Creation Engine (separate project) | **NO - NEVER TOUCH** |
+| Project Name | Project Ref | Status |
+|--------------|-------------|--------|
+| **The Warden** | `dztlwgrlvppxxrfgrfsq` | **ACTIVE - This is the only configured database** |
 
-**Current Issue**: The MCP is connected to "Still" (`tvlvnplhybumuoiflthb`) but should be connected to "The Warden" (`dztlwgrlvppxxrfgrfsq`).
+The MCP server is named `warden` and connects to the correct Supabase project.
 
-To fix, update the MCP config:
-```
-https://mcp.supabase.com/mcp?project_ref=dztlwgrlvppxxrfgrfsq
-```
+**DO NOT** add the Still database (`tvlvnplhybumuoiflthb`) to this project - it belongs to a completely separate application.
 
 ## Tech Stack
 - **Backend**: FastAPI (Python)

@@ -26,23 +26,26 @@ from app.db_models import (
     ResponseTiming,
     WeeklyInsight,
     ErrorLog,
+    User,
 )
 from app.telegram_bot import telegram_service
 from app.llm import generate_message
 from app.patterns import PatternDetector
 from app.streaks import get_streak_context, update_response_streak, update_completion_streak, check_response_streak_broken
 from app.calendar_service import calendar_service
+from app.user_service import get_all_active_users, get_default_user
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-async def log_scheduler_error(job_name: str, error: Exception):
+async def log_scheduler_error(job_name: str, error: Exception, user_id=None):
     """Log a scheduler error to the database for UI visibility."""
     import traceback
     try:
         async with async_session_maker() as db:
             error_log = ErrorLog(
+                user_id=user_id,
                 error_type=type(error).__name__,
                 error_message=str(error),
                 stack_trace=traceback.format_exc(),
@@ -59,17 +62,29 @@ async def log_scheduler_error(job_name: str, error: Exception):
 scheduler = AsyncIOScheduler()
 
 
-async def get_context(db: AsyncSession) -> dict:
-    """Build context dict for LLM calls."""
-    # Get active goals
+async def get_context(db: AsyncSession, user: User = None) -> dict:
+    """Build context dict for LLM calls.
+
+    Args:
+        db: Database session
+        user: User to build context for. If None, uses default user.
+    """
+    # Get user if not provided
+    if user is None:
+        user = await get_default_user(db)
+
+    # Get active goals for this user
     goals_result = await db.execute(
-        select(Goal).where(Goal.is_active == True)
+        select(Goal).where(Goal.user_id == user.id, Goal.is_active == True)
     )
     goals = [{"id": g.id, "title": g.title} for g in goals_result.scalars().all()]
 
-    # Get pending commitments
+    # Get pending commitments for this user
     pending_result = await db.execute(
-        select(Commitment).where(Commitment.status == CommitmentStatus.PENDING)
+        select(Commitment).where(
+            Commitment.user_id == user.id,
+            Commitment.status == CommitmentStatus.PENDING
+        )
     )
     pending = [
         {
@@ -81,11 +96,12 @@ async def get_context(db: AsyncSession) -> dict:
         for c in pending_result.scalars().all()
     ]
 
-    # Get recently completed (last 7 days)
+    # Get recently completed (last 7 days) for this user
     week_ago = datetime.utcnow() - timedelta(days=7)
     completed_result = await db.execute(
         select(Commitment).where(
             and_(
+                Commitment.user_id == user.id,
                 Commitment.status == CommitmentStatus.COMPLETED,
                 Commitment.completed_at > week_ago,
             )
@@ -96,12 +112,13 @@ async def get_context(db: AsyncSession) -> dict:
         for c in completed_result.scalars().all()
     ]
 
-    # Get upcoming deadlines (next 48 hours)
+    # Get upcoming deadlines (next 48 hours) for this user
     now = datetime.utcnow()
     deadline_cutoff = now + timedelta(hours=settings.deadline_alert_hours)
     deadline_result = await db.execute(
         select(Commitment).where(
             and_(
+                Commitment.user_id == user.id,
                 Commitment.status == CommitmentStatus.PENDING,
                 Commitment.due_date.isnot(None),
                 Commitment.due_date > now,
@@ -119,19 +136,19 @@ async def get_context(db: AsyncSession) -> dict:
         for c in deadline_result.scalars().all()
     ]
 
-    # Get active patterns
+    # Get active patterns for this user
     patterns_result = await db.execute(
-        select(Pattern).where(Pattern.is_active == True)
+        select(Pattern).where(Pattern.user_id == user.id, Pattern.is_active == True)
     )
     patterns = [
         {"type": p.pattern_type, "description": p.description, "severity": p.severity}
         for p in patterns_result.scalars().all()
     ]
 
-    # Get days since last response
+    # Get days since last response for this user
     last_response = await db.execute(
         select(CheckIn)
-        .where(CheckIn.response_received == True)
+        .where(CheckIn.user_id == user.id, CheckIn.response_received == True)
         .order_by(CheckIn.responded_at.desc())
         .limit(1)
     )
@@ -140,16 +157,20 @@ async def get_context(db: AsyncSession) -> dict:
     if last_responded and last_responded.responded_at:
         days_since_response = (datetime.utcnow() - last_responded.responded_at).days
 
-    # Calculate completion rate (last 30 days)
+    # Calculate completion rate (last 30 days) for this user
     month_ago = datetime.utcnow() - timedelta(days=30)
     total_result = await db.execute(
-        select(func.count(Commitment.id)).where(Commitment.created_at > month_ago)
+        select(func.count(Commitment.id)).where(
+            Commitment.user_id == user.id,
+            Commitment.created_at > month_ago
+        )
     )
     total_month = total_result.scalar() or 0
 
     completed_month_result = await db.execute(
         select(func.count(Commitment.id)).where(
             and_(
+                Commitment.user_id == user.id,
                 Commitment.status == CommitmentStatus.COMPLETED,
                 Commitment.completed_at > month_ago,
             )
@@ -158,22 +179,26 @@ async def get_context(db: AsyncSession) -> dict:
     completed_month = completed_month_result.scalar() or 0
     completion_rate = (completed_month / total_month * 100) if total_month > 0 else 0
 
-    # Get streak context
-    streaks = await get_streak_context(db)
+    # Get streak context for this user
+    streaks = await get_streak_context(db, user)
 
-    # Get calendar context
-    calendar_ctx = await calendar_service.get_calendar_context(db)
+    # Get calendar context for this user
+    calendar_ctx = await calendar_service.get_calendar_context(db, user)
 
-    # Get chat history count setting (default 15)
+    # Get chat history count setting (default 15) for this user
     chat_count_result = await db.execute(
-        select(Settings).where(Settings.key == "chat_history_count")
+        select(Settings).where(
+            Settings.user_id == user.id,
+            Settings.key == "chat_history_count"
+        )
     )
     chat_count_setting = chat_count_result.scalar_one_or_none()
     chat_history_count = int(chat_count_setting.value) if chat_count_setting else 15
 
-    # Get recent chat history
+    # Get recent chat history for this user
     chat_result = await db.execute(
         select(ChatMessage)
+        .where(ChatMessage.user_id == user.id)
         .order_by(ChatMessage.created_at.desc())
         .limit(chat_history_count)
     )
@@ -183,16 +208,22 @@ async def get_context(db: AsyncSession) -> dict:
         for m in chat_messages
     ]
 
-    # Get LLM memory
+    # Get LLM memory for this user
     memory_result = await db.execute(
-        select(Settings).where(Settings.key == "llm_memory")
+        select(Settings).where(
+            Settings.user_id == user.id,
+            Settings.key == "llm_memory"
+        )
     )
     memory_setting = memory_result.scalar_one_or_none()
     llm_memory = memory_setting.value if memory_setting else ""
 
-    # Get accountability intensity (default 3 = balanced)
+    # Get accountability intensity (default 3 = balanced) for this user
     intensity_result = await db.execute(
-        select(Settings).where(Settings.key == "accountability_intensity")
+        select(Settings).where(
+            Settings.user_id == user.id,
+            Settings.key == "accountability_intensity"
+        )
     )
     intensity_setting = intensity_result.scalar_one_or_none()
     accountability_intensity = int(intensity_setting.value) if intensity_setting else 3
@@ -214,56 +245,73 @@ async def get_context(db: AsyncSession) -> dict:
 
 
 async def daily_checkin_job():
-    """Send daily morning check-in."""
+    """Send daily morning check-in to all active users."""
     logger.info("Running daily check-in job")
 
     async with async_session_maker() as db:
         try:
-            # Check if user is OOO today - skip check-in if so
-            if await calendar_service.is_configured(db):
-                if await calendar_service.is_ooo_today(db):
-                    logger.info("User is OOO today, skipping daily check-in")
-                    return
+            # Get all active users
+            users = await get_all_active_users(db)
+            if not users:
+                logger.warning("No active users found, skipping daily check-in")
+                return
 
-            # Check if response streak was broken
-            await check_response_streak_broken(db)
+            for user in users:
+                try:
+                    # Check if user is OOO today - skip check-in if so
+                    if await calendar_service.is_configured(db, user):
+                        if await calendar_service.is_ooo_today(db, user):
+                            logger.info(f"User {user.id} is OOO today, skipping daily check-in")
+                            continue
 
-            context = await get_context(db)
+                    # Check if response streak was broken
+                    await check_response_streak_broken(db, user)
 
-            # Generate message
-            message = await generate_message("daily_checkin", context)
+                    context = await get_context(db, user)
 
-            # Send via Telegram
-            msg_id = await telegram_service.send_check_in(message)
+                    # Generate message
+                    message = await generate_message("daily_checkin", context)
 
-            # Record check-in
-            checkin = CheckIn(
-                check_in_type=CheckInType.DAILY,
-                message_sent=message,
-                telegram_message_id=msg_id,
-            )
-            db.add(checkin)
+                    # Send via Telegram to user's chat
+                    msg_id = await telegram_service.send_check_in(message, chat_id=user.telegram_chat_id)
 
-            # Save to chat history
-            chat_msg = ChatMessage(
-                role="warden",
-                content=message,
-                message_type="daily_checkin",
-                telegram_message_id=msg_id,
-            )
-            db.add(chat_msg)
+                    # Record check-in
+                    checkin = CheckIn(
+                        user_id=user.id,
+                        check_in_type=CheckInType.DAILY,
+                        message_sent=message,
+                        telegram_message_id=msg_id,
+                    )
+                    db.add(checkin)
 
-            # Run pattern detection
-            detector = PatternDetector(db)
-            new_patterns = await detector.run_detection()
-            if new_patterns:
-                logger.info(f"Detected {len(new_patterns)} new patterns")
+                    # Save to chat history
+                    chat_msg = ChatMessage(
+                        user_id=user.id,
+                        role="warden",
+                        content=message,
+                        message_type="daily_checkin",
+                        telegram_message_id=msg_id,
+                    )
+                    db.add(chat_msg)
 
-            # Deactivate old patterns
-            await detector.deactivate_old_patterns()
+                    # Run pattern detection for this user
+                    detector = PatternDetector(db, user)
+                    new_patterns = await detector.run_detection()
+                    if new_patterns:
+                        logger.info(f"Detected {len(new_patterns)} new patterns for user {user.id}")
+
+                    # Deactivate old patterns
+                    await detector.deactivate_old_patterns()
+
+                    logger.info(f"Daily check-in sent to user {user.id}")
+
+                except Exception as user_error:
+                    logger.error(f"Daily check-in failed for user {user.id}: {user_error}", exc_info=True)
+                    await log_scheduler_error("daily_checkin", user_error, user.id)
+                    continue
 
             await db.commit()
-            logger.info("Daily check-in sent successfully")
+            logger.info("Daily check-in job completed")
 
         except Exception as e:
             logger.error(f"Daily check-in failed: {e}", exc_info=True)

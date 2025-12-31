@@ -23,7 +23,9 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_model: str = "google/gemini-2.5-flash"  # Default model - fast and capable
 
-    # Database
+    # Database - supports SQLite (local) or PostgreSQL (Supabase)
+    # For Supabase: postgresql+asyncpg://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres
+    # For local dev: sqlite+aiosqlite:///./warden.db
     database_url: str = "sqlite+aiosqlite:///./warden.db"
 
     # Timezone

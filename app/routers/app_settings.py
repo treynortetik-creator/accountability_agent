@@ -13,9 +13,10 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.database import get_db
 from app.auth import verify_api_key
-from app.db_models import Settings, ChatMessage, CheckInSchedule, CheckInPrompt, ScheduledFollowup, MoodLog
+from app.db_models import Settings, ChatMessage, CheckInSchedule, CheckInPrompt, ScheduledFollowup, MoodLog, User
 from sqlalchemy import func
 from app.llm import WARDEN_SYSTEM_PROMPT, DEFAULT_PROMPTS
+from app.user_service import get_default_user
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -121,21 +122,29 @@ class ChatMessageResponse(BaseModel):
         from_attributes = True
 
 
-async def get_setting(db: AsyncSession, key: str, default: str = "") -> str:
-    """Get a setting value from the database."""
-    result = await db.execute(select(Settings).where(Settings.key == key))
+async def get_setting(db: AsyncSession, key: str, default: str = "", user: User = None) -> str:
+    """Get a setting value from the database for a specific user."""
+    if user is None:
+        user = await get_default_user(db)
+    result = await db.execute(
+        select(Settings).where(Settings.user_id == user.id, Settings.key == key)
+    )
     setting = result.scalar_one_or_none()
     return setting.value if setting else default
 
 
-async def set_setting(db: AsyncSession, key: str, value: str) -> None:
-    """Set a setting value in the database."""
-    result = await db.execute(select(Settings).where(Settings.key == key))
+async def set_setting(db: AsyncSession, key: str, value: str, user: User = None) -> None:
+    """Set a setting value in the database for a specific user."""
+    if user is None:
+        user = await get_default_user(db)
+    result = await db.execute(
+        select(Settings).where(Settings.user_id == user.id, Settings.key == key)
+    )
     setting = result.scalar_one_or_none()
     if setting:
         setting.value = value
     else:
-        setting = Settings(key=key, value=value)
+        setting = Settings(user_id=user.id, key=key, value=value)
         db.add(setting)
     await db.flush()
 
@@ -234,9 +243,12 @@ async def get_chat_history(
     _: str = Depends(verify_api_key),
 ):
     """Get chat message history."""
+    user = await get_default_user(db)
+
     # Get most recent messages, then reverse for chronological order
     result = await db.execute(
         select(ChatMessage)
+        .where(ChatMessage.user_id == user.id)
         .order_by(ChatMessage.created_at.desc())
         .limit(limit)
     )
@@ -468,8 +480,12 @@ async def list_schedules(
     _: str = Depends(verify_api_key),
 ):
     """List all check-in schedules."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(CheckInSchedule).order_by(CheckInSchedule.hour, CheckInSchedule.minute)
+        select(CheckInSchedule)
+        .where(CheckInSchedule.user_id == user.id)
+        .order_by(CheckInSchedule.hour, CheckInSchedule.minute)
     )
     return result.scalars().all()
 
@@ -481,12 +497,15 @@ async def create_schedule(
     _: str = Depends(verify_api_key),
 ):
     """Create a new check-in schedule."""
+    user = await get_default_user(db)
+
     if schedule.hour < 0 or schedule.hour > 23:
         raise HTTPException(status_code=400, detail="Hour must be 0-23")
     if schedule.minute < 0 or schedule.minute > 59:
         raise HTTPException(status_code=400, detail="Minute must be 0-59")
 
     db_schedule = CheckInSchedule(
+        user_id=user.id,
         name=schedule.name,
         check_in_type=schedule.check_in_type,
         hour=schedule.hour,
@@ -514,6 +533,8 @@ async def update_schedule(
     _: str = Depends(verify_api_key),
 ):
     """Update a check-in schedule."""
+    user = await get_default_user(db)
+
     # Validate hour/minute if provided
     if update.hour is not None and (update.hour < 0 or update.hour > 23):
         raise HTTPException(status_code=400, detail="Hour must be 0-23")
@@ -521,7 +542,10 @@ async def update_schedule(
         raise HTTPException(status_code=400, detail="Minute must be 0-59")
 
     result = await db.execute(
-        select(CheckInSchedule).where(CheckInSchedule.id == schedule_id)
+        select(CheckInSchedule).where(
+            CheckInSchedule.id == schedule_id,
+            CheckInSchedule.user_id == user.id
+        )
     )
     schedule = result.scalar_one_or_none()
     if not schedule:
@@ -548,8 +572,13 @@ async def delete_schedule(
     _: str = Depends(verify_api_key),
 ):
     """Delete a check-in schedule."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(CheckInSchedule).where(CheckInSchedule.id == schedule_id)
+        select(CheckInSchedule).where(
+            CheckInSchedule.id == schedule_id,
+            CheckInSchedule.user_id == user.id
+        )
     )
     schedule = result.scalar_one_or_none()
     if not schedule:
@@ -584,7 +613,11 @@ async def list_prompts(
     _: str = Depends(verify_api_key),
 ):
     """List all check-in prompts (custom and defaults)."""
-    result = await db.execute(select(CheckInPrompt))
+    user = await get_default_user(db)
+
+    result = await db.execute(
+        select(CheckInPrompt).where(CheckInPrompt.user_id == user.id)
+    )
     custom_prompts = {p.prompt_type: p for p in result.scalars().all()}
 
     # Combine with defaults
@@ -608,8 +641,13 @@ async def get_prompt(
     _: str = Depends(verify_api_key),
 ):
     """Get a specific prompt."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(CheckInPrompt).where(CheckInPrompt.prompt_type == prompt_type)
+        select(CheckInPrompt).where(
+            CheckInPrompt.user_id == user.id,
+            CheckInPrompt.prompt_type == prompt_type
+        )
     )
     custom = result.scalar_one_or_none()
 
@@ -633,11 +671,16 @@ async def update_prompt_template(
     _: str = Depends(verify_api_key),
 ):
     """Update or create a custom prompt."""
+    user = await get_default_user(db)
+
     if prompt_type not in DEFAULT_PROMPTS:
         raise HTTPException(status_code=400, detail=f"Invalid prompt type. Must be one of: {list(DEFAULT_PROMPTS.keys())}")
 
     result = await db.execute(
-        select(CheckInPrompt).where(CheckInPrompt.prompt_type == prompt_type)
+        select(CheckInPrompt).where(
+            CheckInPrompt.user_id == user.id,
+            CheckInPrompt.prompt_type == prompt_type
+        )
     )
     existing = result.scalar_one_or_none()
 
@@ -646,6 +689,7 @@ async def update_prompt_template(
         existing.is_custom = True
     else:
         new_prompt = CheckInPrompt(
+            user_id=user.id,
             prompt_type=prompt_type,
             prompt_template=update.prompt_template,
             is_custom=True,
@@ -663,8 +707,13 @@ async def reset_prompt_template(
     _: str = Depends(verify_api_key),
 ):
     """Reset a prompt to its default."""
+    user = await get_default_user(db)
+
     result = await db.execute(
-        select(CheckInPrompt).where(CheckInPrompt.prompt_type == prompt_type)
+        select(CheckInPrompt).where(
+            CheckInPrompt.user_id == user.id,
+            CheckInPrompt.prompt_type == prompt_type
+        )
     )
     existing = result.scalar_one_or_none()
 
