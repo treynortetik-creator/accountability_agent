@@ -108,7 +108,12 @@ class Commitment(Base):
     description = Column(Text, nullable=True)
     due_date = Column(DateTime, nullable=True)
     status = Column(
-        SQLEnum(CommitmentStatus, name="commitment_status", create_type=False),
+        SQLEnum(
+            CommitmentStatus,
+            name="commitment_status",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x]
+        ),
         default=CommitmentStatus.PENDING,
         nullable=False
     )
@@ -130,7 +135,12 @@ class CheckIn(Base):
     id = Column(BigInteger, primary_key=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     check_in_type = Column(
-        SQLEnum(CheckInType, name="checkin_type", create_type=False),
+        SQLEnum(
+            CheckInType,
+            name="checkin_type",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x]
+        ),
         nullable=False
     )
     message_sent = Column(Text, nullable=False)  # What The Warden said
