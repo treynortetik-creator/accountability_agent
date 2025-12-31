@@ -29,7 +29,6 @@ def get_engine_kwargs():
         "poolclass": NullPool,  # Better for serverless - no persistent connections
         "connect_args": {
             "statement_cache_size": 0,  # Disable prepared statement cache for pooler
-            "prepared_statement_cache_size": 0,  # Disable prepared statements entirely
         },
     }
 
