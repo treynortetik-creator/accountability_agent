@@ -3,12 +3,19 @@
 import logging
 from datetime import datetime, time
 import pytz
+import httpx
 from telegram import Bot, Update
 from telegram.constants import ParseMode
+from telegram.request import HTTPXRequest
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Configure timeout for Telegram API calls (in seconds)
+TELEGRAM_CONNECT_TIMEOUT = 10.0
+TELEGRAM_READ_TIMEOUT = 30.0
+TELEGRAM_WRITE_TIMEOUT = 30.0
 
 
 def is_quiet_hours() -> bool:
@@ -108,8 +115,16 @@ class TelegramService:
     """Service for sending and receiving Telegram messages."""
 
     def __init__(self):
-        self.bot = Bot(token=settings.telegram_bot_token) if settings.telegram_bot_token else None
         self.chat_id = settings.telegram_chat_id
+        self.bot = None
+        if settings.telegram_bot_token:
+            # Configure HTTPX request with proper timeouts
+            request = HTTPXRequest(
+                connect_timeout=TELEGRAM_CONNECT_TIMEOUT,
+                read_timeout=TELEGRAM_READ_TIMEOUT,
+                write_timeout=TELEGRAM_WRITE_TIMEOUT,
+            )
+            self.bot = Bot(token=settings.telegram_bot_token, request=request)
 
     async def send_message(
         self, text: str, parse_mode: str = None, ignore_quiet_hours: bool = False
@@ -136,19 +151,35 @@ class TelegramService:
         text_preview = text[:100] + "..." if len(text) > 100 else text
         logger.info(f"Attempting to send Telegram message to chat_id={self.chat_id}: {text_preview}")
 
-        # Try sending as plain text first (most reliable)
-        try:
-            message = await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=text,
-            )
-            logger.info(f"Sent Telegram message (plain): {message.message_id}")
-            return str(message.message_id)
-        except Exception as e:
-            logger.error(f"Failed to send plain Telegram message: {e}", exc_info=True)
-            # Log to ErrorLog for visibility in UI
-            await self._log_send_error(text, str(e))
-            return None
+        # Try sending with retry on timeout
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                message = await self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=text,
+                )
+                logger.info(f"Sent Telegram message (plain): {message.message_id}")
+                return str(message.message_id)
+            except httpx.TimeoutException as e:
+                last_error = e
+                logger.warning(f"Telegram send timeout (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    # Brief pause before retry
+                    import asyncio
+                    await asyncio.sleep(1.0 * (attempt + 1))  # Exponential backoff
+                continue
+            except Exception as e:
+                logger.error(f"Failed to send plain Telegram message: {e}", exc_info=True)
+                await self._log_send_error(text, str(e))
+                return None
+
+        # All retries failed
+        logger.error(f"All {max_retries} Telegram send attempts failed: {last_error}")
+        await self._log_send_error(text, f"Timeout after {max_retries} retries: {last_error}")
+        return None
 
     async def _log_send_error(self, message_text: str, error_message: str):
         """Log Telegram send errors to the database for UI visibility."""
