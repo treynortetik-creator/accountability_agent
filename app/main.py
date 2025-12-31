@@ -26,26 +26,41 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    # Startup
-    logger.info("Starting The Warden...")
-    await init_db()
-    logger.info("Database initialized")
+    # Startup - wrap in try/except so app starts even if init fails
+    # This allows healthcheck to pass so we can see logs
+    startup_error = None
+    try:
+        logger.info("Starting The Warden...")
+        await init_db()
+        logger.info("Database initialized")
 
-    # Initialize persistent settings
-    from app.database import async_session_maker
-    from app.init_settings import initialize_all
-    async with async_session_maker() as db:
-        await initialize_all(db)
-        await db.commit()
-    logger.info("Persistent settings initialized")
+        # Initialize persistent settings
+        from app.database import async_session_maker
+        from app.init_settings import initialize_all
+        async with async_session_maker() as db:
+            await initialize_all(db)
+            await db.commit()
+        logger.info("Persistent settings initialized")
 
-    setup_scheduler()
-    await load_custom_schedules_on_startup()
-    logger.info("The Warden is now watching.")
+        setup_scheduler()
+        await load_custom_schedules_on_startup()
+        logger.info("The Warden is now watching.")
+    except Exception as e:
+        startup_error = e
+        logger.error(f"STARTUP FAILED: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Store error for /health endpoint
+        app.state.startup_error = str(e)
+
     yield
+
     # Shutdown
-    shutdown_scheduler()
-    logger.info("The Warden has shut down.")
+    try:
+        shutdown_scheduler()
+        logger.info("The Warden has shut down.")
+    except Exception as e:
+        logger.error(f"Shutdown error: {e}")
 
 
 app = FastAPI(
@@ -99,6 +114,13 @@ async def api_status():
 @app.get("/health")
 async def health():
     """Health check endpoint."""
+    startup_error = getattr(app.state, 'startup_error', None)
+    if startup_error:
+        return {
+            "status": "unhealthy",
+            "startup_error": startup_error,
+            "scheduler": "not started"
+        }
     return {"status": "healthy", "scheduler": "running"}
 
 

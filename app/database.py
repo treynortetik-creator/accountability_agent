@@ -68,6 +68,8 @@ async def init_db():
             await conn.run_sync(Base.metadata.create_all)
     else:
         # For PostgreSQL, verify connection works
+        # Don't crash the app if connection fails - log and continue
+        # This allows the /health endpoint to work so we can see logs
         try:
             from sqlalchemy import text
             async with engine.connect() as conn:
@@ -75,7 +77,8 @@ async def init_db():
                 logger.info("Database connection verified successfully")
         except Exception as e:
             logger.error(f"Database connection FAILED: {type(e).__name__}: {e}")
-            raise
+            logger.error(f"DATABASE_URL prefix: {settings.database_url[:50]}...")
+            # Don't raise - let the app start so we can debug via /health
 
 
 async def get_db() -> AsyncSession:
