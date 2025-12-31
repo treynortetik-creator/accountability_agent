@@ -118,8 +118,15 @@ class CalendarService:
 
     async def sync_events(self, db: AsyncSession, days_ahead: int = 14, user: User = None) -> int:
         """Sync calendar events from Google Calendar."""
+        from app.user_service import get_default_user
+
+        # Get user for multi-user support
+        if user is None:
+            user = await get_default_user(db)
+
         creds = await self._get_credentials(db, user)
         if not creds:
+            logger.warning("No valid credentials for calendar sync")
             return 0
 
         try:
@@ -131,17 +138,22 @@ class CalendarService:
             time_min = now.isoformat()
             time_max = (now + timedelta(days=days_ahead)).isoformat()
 
-            # Fetch events
-            events_result = service.events().list(
-                calendarId='primary',
-                timeMin=time_min,
-                timeMax=time_max,
-                maxResults=100,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
+            logger.info(f"Fetching calendar events from {time_min} to {time_max}")
+
+            # Fetch events (run in thread since it's blocking)
+            events_result = await asyncio.to_thread(
+                lambda: service.events().list(
+                    calendarId='primary',
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    maxResults=100,
+                    singleEvents=True,
+                    orderBy='startTime'
+                ).execute()
+            )
 
             events = events_result.get('items', [])
+            logger.info(f"Google Calendar API returned {len(events)} events")
 
             # Track Google event IDs from this sync
             google_event_ids = set()
@@ -174,9 +186,12 @@ class CalendarService:
                 if event.get('eventType') == 'outOfOffice':
                     is_ooo = True
 
-                # Check if event already exists
+                # Check if event already exists for this user
                 result = await db.execute(
-                    select(CalendarEvent).where(CalendarEvent.google_event_id == google_event_id)
+                    select(CalendarEvent).where(
+                        CalendarEvent.user_id == user.id,
+                        CalendarEvent.google_event_id == google_event_id
+                    )
                 )
                 existing_event = result.scalar_one_or_none()
 
@@ -189,9 +204,11 @@ class CalendarService:
                     existing_event.all_day = all_day
                     existing_event.location = event.get('location')
                     existing_event.is_ooo = is_ooo
+                    existing_event.last_synced = datetime.utcnow()
                 else:
-                    # Insert new event
+                    # Insert new event WITH user_id
                     cal_event = CalendarEvent(
+                        user_id=user.id,  # CRITICAL: Set user_id
                         google_event_id=google_event_id,
                         title=event.get('summary', 'No Title'),
                         description=event.get('description'),
@@ -205,27 +222,25 @@ class CalendarService:
 
                 synced_count += 1
 
-            # Delete events that were removed from Google Calendar
-            # (events not in the current sync response)
-            # NOTE: Only delete if we synced events from Google.
-            # If google_event_ids is empty, preserve existing events to avoid
-            # data loss in case of API errors or network issues.
+            # Delete events that were removed from Google Calendar for this user
             if google_event_ids:
                 await db.execute(
                     delete(CalendarEvent).where(
+                        CalendarEvent.user_id == user.id,
                         CalendarEvent.google_event_id.not_in(google_event_ids)
                     )
                 )
 
             await db.flush()
-            logger.info(f"Synced {synced_count} calendar events")
+            await db.commit()  # CRITICAL: Commit the changes
+            logger.info(f"Synced and committed {synced_count} calendar events")
             return synced_count
 
         except HttpError as e:
-            logger.error(f"Google Calendar API error: {e}")
+            logger.error(f"Google Calendar API error: {e}", exc_info=True)
             return 0
         except Exception as e:
-            logger.error(f"Failed to sync calendar: {e}")
+            logger.error(f"Failed to sync calendar: {e}", exc_info=True)
             return 0
 
     async def get_upcoming_events(self, db: AsyncSession, hours_ahead: int = 2, user: User = None) -> List[CalendarEvent]:
