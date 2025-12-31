@@ -443,7 +443,10 @@ async def exchange_calendar_code(
             token_data["token_uri"] = "https://oauth2.googleapis.com/token"
 
             await set_setting(db, "google_calendar_token", json.dumps(token_data))
-            logger.info("Saved OAuth tokens to database")
+            # CRITICAL: Commit the tokens BEFORE trying to sync
+            # Otherwise if sync fails, the transaction rolls back and tokens are lost
+            await db.commit()
+            logger.info("Saved and committed OAuth tokens to database")
 
             # Trigger initial calendar sync
             try:
@@ -458,6 +461,7 @@ async def exchange_calendar_code(
                     str(sync_error),
                     {"phase": "initial_sync"}
                 )
+                await db.commit()  # Commit the error log
                 return {"status": "connected", "message": "Calendar connected. Sync will happen on next check-in."}
 
     except httpx.TimeoutException as e:
