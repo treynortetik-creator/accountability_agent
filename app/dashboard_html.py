@@ -1109,7 +1109,39 @@ DASHBOARD_HTML = """
             showSection(section);
         }
 
-        if (API_KEY) { document.getElementById('apiKeyInput').value = API_KEY; authenticate(); }
+        // TEMPORARY: Bypass login and check database status directly
+        (async function() {
+            // Show dashboard immediately without login
+            document.getElementById('auth-overlay').style.display = 'none';
+            document.getElementById('app').style.display = 'flex';
+            document.getElementById('mobile-header').style.display = '';
+
+            // Check database connection status
+            try {
+                const dbStatus = await fetch('/debug/db');
+                const dbData = await dbStatus.json();
+                if (dbData.connection === 'FAILED') {
+                    showToast('Database Error: ' + dbData.error_message, 'error');
+                    document.getElementById('recent-activity').innerHTML =
+                        '<div style="background: #2a1a1a; border: 1px solid #ef4444; border-radius: 8px; padding: 16px; color: #ef4444;">' +
+                        '<strong>Database Connection Failed</strong><br><br>' +
+                        '<strong>Error:</strong> ' + dbData.error_type + '<br>' +
+                        '<strong>Message:</strong> ' + dbData.error_message + '<br><br>' +
+                        '<strong>URL Prefix:</strong> ' + dbData.database_url_prefix + '<br>' +
+                        '<strong>Has Pooler:</strong> ' + dbData.database_url_contains_pooler + '<br>' +
+                        '<strong>Port:</strong> ' + dbData.database_url_port +
+                        '</div>';
+                } else {
+                    showToast('Database connected!', 'success');
+                    loadDashboard();
+                }
+            } catch (e) {
+                showToast('Failed to check database: ' + e.message, 'error');
+            }
+        })();
+
+        // Original login code (disabled for now)
+        // if (API_KEY) { document.getElementById('apiKeyInput').value = API_KEY; authenticate(); }
 
         async function api(method, endpoint, data = null) {
             try {
