@@ -23,8 +23,11 @@ router = APIRouter(prefix="/calendar", tags=["calendar"])
 async def oauth_callback(
     code: str = None,
     error: str = None,
+    db: AsyncSession = Depends(get_db),
 ):
-    """Handle Google OAuth callback - displays the auth code for user to copy."""
+    """Handle Google OAuth callback - automatically exchanges code for tokens."""
+    import json
+
     if error:
         return HTMLResponse(content=f"""
         <!DOCTYPE html>
@@ -75,60 +78,147 @@ async def oauth_callback(
         </html>
         """)
 
-    # Return HTML that shows the code and tries to send it back to opener window
-    return HTMLResponse(content=f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Authorization Successful</title>
-        <style>
-            body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
-                   display: flex; justify-content: center; align-items: center;
-                   min-height: 100vh; margin: 0; }}
-            .container {{ text-align: center; padding: 40px; background: #16213e;
-                         border-radius: 12px; max-width: 600px; }}
-            h1 {{ color: #4ecdc4; margin-bottom: 20px; }}
-            .code-box {{ background: #0f0f23; padding: 15px; border-radius: 8px;
-                        word-break: break-all; font-family: monospace; font-size: 12px;
-                        margin: 20px 0; border: 1px solid #333; }}
-            .success {{ color: #4ecdc4; font-size: 48px; margin-bottom: 10px; }}
-            .instructions {{ color: #aaa; margin-top: 20px; }}
-            button {{ background: #4ecdc4; color: #1a1a2e; border: none; padding: 12px 24px;
-                     border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; }}
-            button:hover {{ background: #3dbdb5; }}
-            #status {{ margin-top: 15px; color: #4ecdc4; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="success">✓</div>
-            <h1>Authorization Successful!</h1>
-            <p>Copy this code and paste it in The Warden settings:</p>
-            <div class="code-box" id="code">{code}</div>
-            <button onclick="copyCode()">Copy Code</button>
-            <p id="status"></p>
-            <p class="instructions">After copying, close this window and paste the code in the authorization field.</p>
-        </div>
-        <script>
-            function copyCode() {{
-                const code = document.getElementById('code').textContent;
-                navigator.clipboard.writeText(code).then(() => {{
-                    document.getElementById('status').textContent = 'Copied to clipboard!';
-                }});
-            }}
+    # Try to automatically exchange the code for tokens
+    exchange_result = None
+    exchange_error = None
 
-            // Try to auto-send code to opener window
-            if (window.opener) {{
-                try {{
-                    window.opener.postMessage({{ type: 'google-auth-code', code: '{code}' }}, '*');
-                }} catch(e) {{
-                    console.log('Could not send to opener:', e);
+    try:
+        # Get stored OAuth config
+        result = await db.execute(
+            select(Settings).where(Settings.key == "google_calendar_token")
+        )
+        token_setting = result.scalar_one_or_none()
+
+        if token_setting:
+            token_data = json.loads(token_setting.value)
+            client_id = token_data.get('client_id')
+            client_secret = token_data.get('client_secret')
+            redirect_uri = token_data.get('redirect_uri', 'https://example.invalid/api/calendar/callback')
+
+            if client_id and client_secret:
+                # Exchange code for tokens
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        "https://oauth2.googleapis.com/token",
+                        data={
+                            "code": code,
+                            "client_id": client_id,
+                            "client_secret": client_secret,
+                            "redirect_uri": redirect_uri,
+                            "grant_type": "authorization_code",
+                        }
+                    )
+
+                    if response.status_code == 200:
+                        tokens = response.json()
+                        # Save tokens
+                        token_data['token'] = tokens.get('access_token')
+                        token_data['refresh_token'] = tokens.get('refresh_token')
+                        token_data['token_uri'] = 'https://oauth2.googleapis.com/token'
+                        token_setting.value = json.dumps(token_data)
+                        await db.commit()
+                        exchange_result = "success"
+                        logger.info("Successfully exchanged OAuth code for tokens via callback")
+                    else:
+                        error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                        exchange_error = error_data.get('error_description', error_data.get('error', 'Unknown error'))
+                        logger.error(f"Token exchange failed: {exchange_error}")
+            else:
+                exchange_error = "Missing client credentials in database"
+        else:
+            exchange_error = "No OAuth configuration found"
+    except Exception as e:
+        exchange_error = str(e)
+        logger.error(f"Error during token exchange: {e}")
+
+    # Return success or failure page
+    if exchange_result == "success":
+        return HTMLResponse(content="""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Calendar Connected!</title>
+            <style>
+                body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
+                       display: flex; justify-content: center; align-items: center;
+                       min-height: 100vh; margin: 0; }
+                .container { text-align: center; padding: 40px; background: #16213e;
+                             border-radius: 12px; max-width: 500px; }
+                h1 { color: #4ecdc4; margin-bottom: 20px; }
+                .success { color: #4ecdc4; font-size: 64px; margin-bottom: 10px; }
+                p { color: #aaa; margin: 15px 0; }
+                .note { font-size: 14px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="success">✓</div>
+                <h1>Google Calendar Connected!</h1>
+                <p>Your calendar has been successfully connected to The Warden.</p>
+                <p class="note">You can close this window and return to the dashboard.</p>
+                <p class="note">Click "Sync Google Calendar" to fetch your events.</p>
+            </div>
+            <script>
+                // Notify opener window if available
+                if (window.opener) {
+                    try {
+                        window.opener.postMessage({ type: 'google-auth-success' }, '*');
+                    } catch(e) {}
+                }
+            </script>
+        </body>
+        </html>
+        """)
+    else:
+        # Show error with fallback to manual code copy
+        return HTMLResponse(content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Authorization Issue</title>
+            <style>
+                body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
+                       display: flex; justify-content: center; align-items: center;
+                       min-height: 100vh; margin: 0; }}
+                .container {{ text-align: center; padding: 40px; background: #16213e;
+                             border-radius: 12px; max-width: 600px; }}
+                h1 {{ color: #ffa500; margin-bottom: 20px; }}
+                .warning {{ color: #ffa500; font-size: 48px; margin-bottom: 10px; }}
+                .error {{ color: #ff6b6b; background: #2a1a2e; padding: 10px; border-radius: 6px;
+                         margin: 15px 0; font-size: 14px; }}
+                .code-box {{ background: #0f0f23; padding: 15px; border-radius: 8px;
+                            word-break: break-all; font-family: monospace; font-size: 12px;
+                            margin: 20px 0; border: 1px solid #333; }}
+                p {{ color: #aaa; }}
+                button {{ background: #4ecdc4; color: #1a1a2e; border: none; padding: 12px 24px;
+                         border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;
+                         margin-top: 10px; }}
+                button:hover {{ background: #3dbdb5; }}
+                #status {{ margin-top: 15px; color: #4ecdc4; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="warning">⚠️</div>
+                <h1>Automatic Setup Failed</h1>
+                <div class="error">Error: {exchange_error}</div>
+                <p>You can still complete the setup manually. Copy this code:</p>
+                <div class="code-box" id="code">{code}</div>
+                <button onclick="copyCode()">Copy Code</button>
+                <p id="status"></p>
+                <p>Use the API endpoint POST /api/calendar/exchange-code with this code.</p>
+            </div>
+            <script>
+                function copyCode() {{
+                    const code = document.getElementById('code').textContent;
+                    navigator.clipboard.writeText(code).then(() => {{
+                        document.getElementById('status').textContent = 'Copied to clipboard!';
+                    }});
                 }}
-            }}
-        </script>
-    </body>
-    </html>
-    """)
+            </script>
+        </body>
+        </html>
+        """)
 
 
 class CalendarEventResponse(BaseModel):
@@ -147,6 +237,10 @@ class CalendarEventResponse(BaseModel):
 
 class CalendarConnectRequest(BaseModel):
     api_key: str  # Google Calendar API key
+
+
+class OAuthExchangeRequest(BaseModel):
+    code: str  # The authorization code from Google OAuth callback
 
 
 class CalendarSyncResponse(BaseModel):
@@ -179,13 +273,152 @@ async def sync_calendar(
 ):
     """Manually trigger calendar sync from Google Calendar."""
     from app.calendar_service import calendar_service
+    from app.user_service import get_default_user
 
-    is_configured = await calendar_service.is_configured(db)
+    # Get user for multi-user support
+    user = await get_default_user(db)
+
+    # Check if OAuth token exists
+    result = await db.execute(
+        select(Settings).where(
+            Settings.user_id == user.id,
+            Settings.key == "google_calendar_token"
+        )
+    )
+    token_setting = result.scalar_one_or_none()
+
+    if not token_setting:
+        # Also check without user_id for backwards compatibility
+        result = await db.execute(
+            select(Settings).where(Settings.key == "google_calendar_token")
+        )
+        token_setting = result.scalar_one_or_none()
+
+    if not token_setting:
+        raise HTTPException(
+            status_code=400,
+            detail="Google Calendar OAuth not configured. You need to complete the OAuth flow to connect your calendar."
+        )
+
+    is_configured = await calendar_service.is_configured(db, user)
     if not is_configured:
-        raise HTTPException(status_code=400, detail="Google Calendar not connected")
+        raise HTTPException(
+            status_code=400,
+            detail="Google Calendar credentials are invalid or expired. Please reconnect your calendar."
+        )
 
-    synced_count = await calendar_service.sync_events(db)
-    return {"status": "synced", "events_synced": synced_count}
+    try:
+        synced_count = await calendar_service.sync_events(db, user=user)
+        if synced_count == 0:
+            return {"status": "synced", "events_synced": 0, "message": "No events found in the next 14 days"}
+        return {"status": "synced", "events_synced": synced_count}
+    except Exception as e:
+        logger.error(f"Calendar sync failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+
+@router.post("/exchange-code")
+async def exchange_oauth_code(
+    request: OAuthExchangeRequest,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Exchange OAuth authorization code for access tokens.
+
+    This completes the OAuth flow by:
+    1. Getting the stored client_id and client_secret
+    2. Exchanging the auth code for access_token and refresh_token
+    3. Saving the tokens to the database
+    """
+    import json
+    from app.user_service import get_default_user
+
+    user = await get_default_user(db)
+
+    # Get existing OAuth config (should have client_id and client_secret)
+    result = await db.execute(
+        select(Settings).where(
+            Settings.user_id == user.id,
+            Settings.key == "google_calendar_token"
+        )
+    )
+    token_setting = result.scalar_one_or_none()
+
+    # Also check without user_id for backwards compatibility
+    if not token_setting:
+        result = await db.execute(
+            select(Settings).where(Settings.key == "google_calendar_token")
+        )
+        token_setting = result.scalar_one_or_none()
+
+    if not token_setting:
+        raise HTTPException(
+            status_code=400,
+            detail="No OAuth configuration found. Please configure client_id and client_secret first."
+        )
+
+    try:
+        token_data = json.loads(token_setting.value)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid token configuration in database")
+
+    client_id = token_data.get('client_id')
+    client_secret = token_data.get('client_secret')
+    redirect_uri = token_data.get('redirect_uri')
+
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing client_id or client_secret in OAuth configuration"
+        )
+
+    # Exchange the code for tokens
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": request.code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri or "https://example.invalid/api/calendar/callback",
+                    "grant_type": "authorization_code",
+                }
+            )
+
+            if response.status_code != 200:
+                error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                error_msg = error_data.get('error_description', error_data.get('error', response.text))
+                logger.error(f"Google OAuth token exchange failed: {response.status_code} - {error_msg}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to exchange code: {error_msg}"
+                )
+
+            tokens = response.json()
+
+    except httpx.RequestError as e:
+        logger.error(f"Network error during token exchange: {e}")
+        raise HTTPException(status_code=500, detail=f"Network error: {str(e)}")
+
+    # Update token data with the new tokens
+    token_data['token'] = tokens.get('access_token')
+    token_data['refresh_token'] = tokens.get('refresh_token')
+    token_data['token_uri'] = 'https://oauth2.googleapis.com/token'
+
+    # Save updated tokens
+    token_setting.value = json.dumps(token_data)
+    await db.flush()
+    await db.commit()
+
+    logger.info(f"Successfully exchanged OAuth code for tokens")
+
+    return {
+        "status": "success",
+        "message": "OAuth tokens saved successfully. You can now sync your calendar.",
+        "has_access_token": bool(tokens.get('access_token')),
+        "has_refresh_token": bool(tokens.get('refresh_token')),
+    }
 
 
 @router.post("/connect")
