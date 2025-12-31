@@ -115,7 +115,6 @@ After deployment, set your Telegram webhook to the Railway URL.
 - `GET /api/checkins/responses` - List responses
 - `GET /api/checkins/patterns` - List detected patterns
 - `GET /api/checkins/stats` - Get statistics
-- `GET /api/checkins/schedule` - Get schedule config
 
 ### Triggers (for testing)
 - `POST /api/trigger/checkin` - Trigger daily check-in

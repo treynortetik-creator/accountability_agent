@@ -133,15 +133,6 @@ class TestCheckInsAPI:
         data = response.json()
         assert isinstance(data, list)
 
-    @pytest.mark.asyncio
-    async def test_get_checkin_schedule(self, client):
-        """Test getting check-in schedule."""
-        response = await client.get("/api/checkins/schedule")
-        assert response.status_code == 200
-        data = response.json()
-        assert "daily_checkin_hour" in data
-
-
 class TestSchedulesAPI:
     """Test schedule management."""
 

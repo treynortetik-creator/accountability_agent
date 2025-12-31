@@ -142,29 +142,6 @@ class PatternResponse(BaseModel):
         from_attributes = True
 
 
-# ============ Schedule Models ============
-
-
-class ScheduleConfigUpdate(BaseModel):
-    """Update schedule configuration."""
-
-    daily_checkin_hour: Optional[int] = Field(None, ge=0, le=23)
-    daily_checkin_minute: Optional[int] = Field(None, ge=0, le=59)
-    weekly_review_day: Optional[str] = None
-    weekly_review_hour: Optional[int] = Field(None, ge=0, le=23)
-    weekly_review_minute: Optional[int] = Field(None, ge=0, le=59)
-
-
-class ScheduleConfigResponse(BaseModel):
-    """Schedule configuration response."""
-
-    daily_checkin_hour: int
-    daily_checkin_minute: int
-    weekly_review_day: str
-    weekly_review_hour: int
-    weekly_review_minute: int
-
-
 # ============ Stats Models ============
 
 
