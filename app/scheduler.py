@@ -126,15 +126,17 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
             )
         )
     )
-    upcoming_deadlines = [
-        {
+    upcoming_deadlines = []
+    for c in deadline_result.scalars().all():
+        # Ensure both datetimes are naive for subtraction
+        due = c.due_date.replace(tzinfo=None) if c.due_date.tzinfo else c.due_date
+        now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+        upcoming_deadlines.append({
             "id": c.id,
             "title": c.title,
             "due_date": c.due_date.isoformat(),
-            "hours_until": (c.due_date - now).total_seconds() / 3600,
-        }
-        for c in deadline_result.scalars().all()
-    ]
+            "hours_until": (due - now_naive).total_seconds() / 3600,
+        })
 
     # Get active patterns for this user
     patterns_result = await db.execute(
@@ -647,7 +649,10 @@ async def deadline_alert_job():
                 if recent_alert.scalar_one_or_none():
                     continue
 
-                hours_until = (commitment.due_date - now).total_seconds() / 3600
+                # Ensure both datetimes are naive for subtraction
+                due = commitment.due_date.replace(tzinfo=None) if commitment.due_date.tzinfo else commitment.due_date
+                now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+                hours_until = (due - now_naive).total_seconds() / 3600
 
                 context = await get_context(db)
                 context["deadline_commitment"] = {
