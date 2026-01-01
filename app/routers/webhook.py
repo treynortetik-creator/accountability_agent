@@ -385,23 +385,8 @@ async def telegram_webhook(request: Request):
             # Build context for analysis
             context = await get_context(db, user)
 
-            # Try to parse as a commitment first
-            parsed_commitment, commit_reply = await try_parse_commitment(db, message_text, context, user)
-            if parsed_commitment:
-                if commit_reply:
-                    # Always respond to user messages, even during quiet hours
-                    msg_id = await telegram_service.send_message(commit_reply, ignore_quiet_hours=True)
-                    warden_chat_msg = ChatMessage(
-                        user_id=user.id,
-                        role="warden",
-                        content=commit_reply,
-                        message_type="commitment_confirm",
-                        telegram_message_id=msg_id,
-                    )
-                    db.add(warden_chat_msg)
-                await db.commit()
-                logger.info("Parsed and handled commitment")
-                return {"ok": True}
+            # NOTE: Auto-commitment parsing removed. The Warden only creates
+            # commitments when explicitly asked by the user.
 
             # Find the most recent unanswered check-in for this user
             recent_checkin = await db.execute(

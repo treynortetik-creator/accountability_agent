@@ -79,15 +79,14 @@ async def init_system_prompt(db: AsyncSession) -> None:
         existing = result.scalar_one_or_none()
 
         if not existing:
+            # Only create if no system prompt exists
             setting = Settings(key="system_prompt", value=WARDEN_SYSTEM_PROMPT)
             db.add(setting)
             await db.flush()
             logger.info("System prompt initialized in database")
         else:
-            # Update to latest version
-            existing.value = WARDEN_SYSTEM_PROMPT
-            await db.flush()
-            logger.info("System prompt updated to latest version")
+            # DO NOT overwrite - user may have customized the prompt
+            logger.info("System prompt already exists in database (not overwriting)")
 
     except Exception as e:
         logger.error(f"Failed to initialize system prompt: {e}")
