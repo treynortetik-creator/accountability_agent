@@ -280,6 +280,7 @@ async def debug_calendar_sync(
 ):
     """Debug endpoint to see exactly what's happening with calendar sync."""
     import json
+    import traceback
     from app.user_service import get_default_user
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
@@ -374,11 +375,59 @@ async def debug_calendar_sync(
             "events_in_db": len(db_events),
         })
 
+        # Step 6: Try to actually insert the first event
+        if events:
+            try:
+                first_event = events[0]
+                start = first_event.get('start', {})
+                all_day = 'date' in start
+
+                if all_day:
+                    start_time = datetime.strptime(start['date'], '%Y-%m-%d')
+                else:
+                    start_time = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00'))
+
+                test_event = CalendarEvent(
+                    user_id=user.id,
+                    google_event_id=f"debug_test_{first_event['id']}",
+                    title=f"DEBUG: {first_event.get('summary', 'No Title')}",
+                    description="Debug test insert",
+                    start_time=start_time,
+                    end_time=start_time,
+                    all_day=all_day,
+                    location=None,
+                    is_ooo=False,
+                )
+                db.add(test_event)
+                await db.flush()
+                await db.commit()
+
+                debug_info["steps"].append({
+                    "step": "test_insert",
+                    "success": True,
+                    "event_title": first_event.get('summary', 'No Title'),
+                })
+
+                # Check again
+                db_result2 = await db.execute(select(CalendarEvent))
+                db_events2 = db_result2.scalars().all()
+                debug_info["steps"].append({
+                    "step": "after_insert_check",
+                    "events_in_db": len(db_events2),
+                })
+
+            except Exception as insert_error:
+                debug_info["steps"].append({
+                    "step": "test_insert",
+                    "success": False,
+                    "error": str(insert_error),
+                    "traceback": traceback.format_exc(),
+                })
+
         debug_info["success"] = True
         return debug_info
 
     except Exception as e:
-        import traceback
         debug_info["error"] = str(e)
         debug_info["traceback"] = traceback.format_exc()
         return debug_info
