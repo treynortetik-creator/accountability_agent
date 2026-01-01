@@ -165,9 +165,13 @@ async def handle_pending_confirmation(db, message_text: str, user: User) -> tupl
                 # Spread deadlines if there's a due date
                 step_due = None
                 if base_due and len(breakdown_steps) > 1:
+                    # Ensure base_due is naive for comparison
+                    base_naive = base_due
+                    if hasattr(base_naive, 'tzinfo') and base_naive.tzinfo is not None:
+                        base_naive = base_naive.replace(tzinfo=None)
                     # Distribute evenly before the main deadline
                     days_before = (len(breakdown_steps) - i) * 1  # 1 day per step
-                    step_due = base_due - timedelta(days=days_before)
+                    step_due = base_naive - timedelta(days=days_before)
                     if step_due < datetime.utcnow():
                         step_due = datetime.utcnow() + timedelta(hours=i+1)  # At least stagger by hour
 

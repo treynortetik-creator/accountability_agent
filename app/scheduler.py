@@ -157,7 +157,10 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     last_responded = last_response.scalar_one_or_none()
     days_since_response = 0
     if last_responded and last_responded.responded_at:
-        days_since_response = (datetime.utcnow() - last_responded.responded_at).days
+        responded = last_responded.responded_at
+        if hasattr(responded, 'tzinfo') and responded.tzinfo is not None:
+            responded = responded.replace(tzinfo=None)
+        days_since_response = (datetime.utcnow() - responded).days
 
     # Calculate completion rate (last 30 days) for this user
     month_ago = datetime.utcnow() - timedelta(days=30)
@@ -447,7 +450,11 @@ async def silence_detector_job():
                 return
 
             # Calculate hours since last check-in
-            hours_since = (datetime.utcnow() - last_checkin.sent_at).total_seconds() / 3600
+            # Ensure sent_at is naive (no timezone) for subtraction
+            sent_at = last_checkin.sent_at
+            if hasattr(sent_at, 'tzinfo') and sent_at.tzinfo is not None:
+                sent_at = sent_at.replace(tzinfo=None)
+            hours_since = (datetime.utcnow() - sent_at).total_seconds() / 3600
 
             # ENHANCED: Calculate personalized threshold based on user's typical response time
             avg_response_result = await db.execute(
@@ -571,7 +578,11 @@ async def commitment_reminder_job():
                     continue
 
                 # Calculate time until due
-                minutes_until = (commitment.due_date - now_utc).total_seconds() / 60
+                # Ensure due_date is naive for subtraction
+                due = commitment.due_date
+                if hasattr(due, 'tzinfo') and due.tzinfo is not None:
+                    due = due.replace(tzinfo=None)
+                minutes_until = (due - now_utc).total_seconds() / 60
                 due_time_str = commitment.due_date.strftime('%I:%M %p').lstrip('0')
 
                 # Generate a conversational reminder
