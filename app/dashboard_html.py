@@ -12,6 +12,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <style>
 /* ==========================================================================
    THE WARDEN - CYBERPUNK UI
@@ -324,7 +325,9 @@ h4 { font-size: 1rem; }
     align-items: center;
     justify-content: center;
     border-bottom: 1px solid var(--chrome);
-    font-size: 1.5rem;
+    font-size: 1.75rem;
+    color: var(--neon-pink);
+    filter: drop-shadow(0 0 8px var(--neon-pink));
 }
 
 .rail-nav {
@@ -366,10 +369,24 @@ h4 { font-size: 1rem; }
     width: 32px;
     text-align: center;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.rail-item.active .rail-icon {
-    text-shadow: var(--glow-sm) var(--neon-pink);
+.rail-icon i {
+    font-size: 1.35rem;
+    transition: all 0.3s ease;
+}
+
+.rail-item.active .rail-icon i {
+    color: var(--neon-pink);
+    filter: drop-shadow(0 0 6px var(--neon-pink));
+}
+
+.rail-item:hover .rail-icon i {
+    color: var(--neon-cyan);
+    filter: drop-shadow(0 0 4px var(--neon-cyan));
 }
 
 .rail-label {
@@ -711,7 +728,7 @@ h4 { font-size: 1rem; }
     width: 50%;
     height: 100%;
     background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-    animation: shine-sweep 3s ease-in-out infinite;
+    animation: shine-sweep 25s ease-in-out infinite;
 }
 
 @keyframes shine-sweep {
@@ -1448,34 +1465,34 @@ h4 { font-size: 1rem; }
 
         <!-- Command Rail (Navigation) -->
         <nav class="command-rail" id="sidebar">
-            <div class="rail-logo">&#x1F512;</div>
+            <div class="rail-logo"><i class="ph-bold ph-shield-chevron"></i></div>
             <div class="rail-nav">
                 <a class="rail-item active" onclick="showSection('dashboard')">
-                    <span class="rail-icon">&#x1F4CA;</span>
+                    <span class="rail-icon"><i class="ph-bold ph-monitor"></i></span>
                     <span class="rail-label">Command</span>
                 </a>
                 <a class="rail-item" onclick="showSection('chat')">
-                    <span class="rail-icon">&#x1F4AC;</span>
+                    <span class="rail-icon"><i class="ph-bold ph-chat-centered-text"></i></span>
                     <span class="rail-label">Comms</span>
                 </a>
                 <a class="rail-item" onclick="showSection('commitments')">
-                    <span class="rail-icon">&#x1F3AF;</span>
+                    <span class="rail-icon"><i class="ph-bold ph-crosshair"></i></span>
                     <span class="rail-label">Missions</span>
                 </a>
                 <a class="rail-item" onclick="showSection('goals')">
-                    <span class="rail-icon">&#x2B50;</span>
+                    <span class="rail-icon"><i class="ph-bold ph-flag-pennant"></i></span>
                     <span class="rail-label">Objectives</span>
                 </a>
                 <a class="rail-item" onclick="showSection('calendar')">
-                    <span class="rail-icon">&#x23F0;</span>
+                    <span class="rail-icon"><i class="ph-bold ph-calendar-blank"></i></span>
                     <span class="rail-label">Temporal</span>
                 </a>
                 <a class="rail-item" onclick="showSection('settings')">
-                    <span class="rail-icon">&#x2699;&#xFE0F;</span>
+                    <span class="rail-icon"><i class="ph-bold ph-gear-six"></i></span>
                     <span class="rail-label">Systems</span>
                 </a>
                 <a class="rail-item" onclick="showSection('errors')">
-                    <span class="rail-icon">&#x1F41B;</span>
+                    <span class="rail-icon"><i class="ph-bold ph-warning"></i></span>
                     <span class="rail-label">Debug</span>
                     <span id="error-count-badge" class="badge badge-pending" style="margin-left: auto; display: none;">0</span>
                 </a>
@@ -1535,7 +1552,7 @@ h4 { font-size: 1rem; }
                     <div class="card">
                         <div class="card-header">
                             <h3 class="card-title">Recent Ops</h3>
-                            <button class="btn btn-sm btn-secondary" onclick="triggerCheckin()">&#x1F514; Trigger Check-in</button>
+                            <button class="btn btn-sm btn-secondary" onclick="triggerCheckin()"><i class="ph-bold ph-bell-ringing"></i> Trigger Check-in</button>
                         </div>
                         <div id="recent-activity"><div class="empty-state">Loading...</div></div>
                     </div>
@@ -1586,7 +1603,7 @@ h4 { font-size: 1rem; }
                 <!-- Memory Panel -->
                 <div class="card mt-lg">
                     <div class="card-header" style="cursor: pointer;" onclick="toggleMemoryPanel()">
-                        <h3 class="card-title">&#x1F9E0; Warden's Memory</h3>
+                        <h3 class="card-title"><i class="ph-bold ph-brain"></i> Warden's Memory</h3>
                         <span id="memory-toggle-icon" style="font-size: 1.125rem;">&#x25BC;</span>
                     </div>
                     <div id="memory-panel" style="display: none;">
@@ -1606,7 +1623,7 @@ h4 { font-size: 1rem; }
                 <!-- Agent Intelligence Panel -->
                 <div class="card mt-md">
                     <div class="card-header" style="cursor: pointer;" onclick="toggleAgentPanel()">
-                        <h3 class="card-title">&#x1F916; Agent Intelligence</h3>
+                        <h3 class="card-title"><i class="ph-bold ph-robot"></i> Agent Intelligence</h3>
                         <span id="agent-toggle-icon" style="font-size: 1.125rem;">&#x25BC;</span>
                     </div>
                     <div id="agent-panel" style="display: none;">
@@ -1784,7 +1801,7 @@ h4 { font-size: 1rem; }
                 <!-- Upcoming Commitments -->
                 <div class="card mb-md">
                     <div class="card-header">
-                        <h3 class="card-title">&#x1F4CB; Upcoming Missions</h3>
+                        <h3 class="card-title"><i class="ph-bold ph-list-checks"></i> Upcoming Missions</h3>
                         <span id="commitment-count" class="badge badge-pending">0</span>
                     </div>
                     <div id="calendar-commitments">
@@ -1795,12 +1812,12 @@ h4 { font-size: 1rem; }
                 <!-- Calendar Events -->
                 <div class="card">
                     <div class="card-header">
-                        <h3 class="card-title">&#x1F4C5; Calendar Events (14 days)</h3>
+                        <h3 class="card-title"><i class="ph-bold ph-calendar-blank"></i> Calendar Events (14 days)</h3>
                         <span id="event-count" class="badge badge-pending">0</span>
                     </div>
                     <div id="calendar-events">
                         <div class="empty-state">
-                            <div class="empty-state-icon">&#x1F4C5;</div>
+                            <div class="empty-state-icon"><i class="ph-bold ph-calendar-blank" style="font-size: 2rem;"></i></div>
                             <p>No upcoming events. Connect Google Calendar in Systems.</p>
                         </div>
                     </div>
@@ -1837,8 +1854,8 @@ h4 { font-size: 1rem; }
                             <h3 class="card-title">Quick Actions</h3>
                         </div>
                         <div style="display: flex; flex-direction: column; gap: 12px;">
-                            <button class="btn btn-secondary" onclick="triggerCheckin()">&#x1F514; Trigger Check-in</button>
-                            <button class="btn btn-secondary" onclick="triggerWeeklyReview()">&#x1F4CA; Trigger Weekly Review</button>
+                            <button class="btn btn-secondary" onclick="triggerCheckin()"><i class="ph-bold ph-bell-ringing"></i> Trigger Check-in</button>
+                            <button class="btn btn-secondary" onclick="triggerWeeklyReview()"><i class="ph-bold ph-chart-line-up"></i> Trigger Weekly Review</button>
                         </div>
                     </div>
                 </div>
@@ -1846,7 +1863,7 @@ h4 { font-size: 1rem; }
                 <!-- Check-in Schedules -->
                 <div class="card mt-lg">
                     <div class="card-header">
-                        <h3 class="card-title">&#x1F550; Check-in Schedules</h3>
+                        <h3 class="card-title"><i class="ph-bold ph-clock"></i> Check-in Schedules</h3>
                         <button class="btn btn-sm btn-primary" onclick="showAddScheduleForm()">+ Add Schedule</button>
                     </div>
                     <p style="color: var(--smoke); font-size: 0.8125rem; margin-bottom: 16px;">
@@ -1893,7 +1910,7 @@ h4 { font-size: 1rem; }
                 <!-- Quiet Hours -->
                 <div class="card mt-lg">
                     <div class="card-header">
-                        <h3 class="card-title">&#x1F319; Quiet Hours</h3>
+                        <h3 class="card-title"><i class="ph-bold ph-moon-stars"></i> Quiet Hours</h3>
                     </div>
                     <p style="color: var(--smoke); font-size: 0.8125rem; margin-bottom: 16px;">
                         During quiet hours, The Warden won't send scheduled messages.
@@ -1920,7 +1937,7 @@ h4 { font-size: 1rem; }
                 <!-- Check-in Prompts -->
                 <div class="card mt-lg">
                     <div class="card-header">
-                        <h3 class="card-title">&#x1F4DD; Check-in Prompts</h3>
+                        <h3 class="card-title"><i class="ph-bold ph-text-aa"></i> Check-in Prompts</h3>
                     </div>
                     <p style="color: var(--smoke); font-size: 0.8125rem; margin-bottom: 16px;">
                         Customize prompts for different check-in types.
@@ -2078,9 +2095,9 @@ h4 { font-size: 1rem; }
 
         <!-- Quick Access Strip -->
         <footer class="quick-access">
-            <button class="btn btn-primary" onclick="triggerCheckin()">&#x1F514; Trigger Check-in</button>
-            <button class="btn btn-secondary" onclick="showSection('commitments'); document.getElementById('commit-title').focus();">+ New Mission</button>
-            <button class="btn btn-secondary" onclick="showSection('chat'); document.getElementById('chat-input').focus();">&#x1F4AC; Quick Chat</button>
+            <button class="btn btn-primary" onclick="triggerCheckin()"><i class="ph-bold ph-bell-ringing"></i> Trigger Check-in</button>
+            <button class="btn btn-secondary" onclick="showSection('commitments'); document.getElementById('commit-title').focus();"><i class="ph-bold ph-plus"></i> New Mission</button>
+            <button class="btn btn-secondary" onclick="showSection('chat'); document.getElementById('chat-input').focus();"><i class="ph-bold ph-chat-centered-text"></i> Quick Chat</button>
         </footer>
 
     </div>
@@ -2228,7 +2245,7 @@ async function loadDashboard() {
 
     const checkins = await api('GET', '/checkins?limit=5');
     document.getElementById('recent-activity').innerHTML = checkins && checkins.length
-        ? checkins.map(c => `<div class="list-item"><div><div class="list-item-title">${c.response_received ? '✅' : '⏳'} ${c.check_in_type.replace('_', ' ')}</div><div class="list-item-meta">${new Date(c.sent_at).toLocaleString()}</div></div></div>`).join('')
+        ? checkins.map(c => `<div class="list-item"><div><div class="list-item-title">${c.response_received ? '<i class="ph-bold ph-check-circle" style="color: var(--success);"></i>' : '<i class="ph-bold ph-clock" style="color: var(--warning);"></i>'} ${c.check_in_type.replace('_', ' ')}</div><div class="list-item-meta">${new Date(c.sent_at).toLocaleString()}</div></div></div>`).join('')
         : '<div class="empty-state">No check-ins yet</div>';
 }
 
@@ -2260,8 +2277,8 @@ async function loadPatterns() {
 async function loadChatHistory() {
     const messages = await api('GET', '/settings/chat-history?limit=50');
     const container = document.getElementById('chat-messages');
-    if (!messages || !messages.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><p>No messages yet. Say hi!</p></div>'; return; }
-    container.innerHTML = messages.map(m => `<div class="chat-message ${m.role}"><div class="chat-avatar">${m.role === 'warden' ? '🔒' : '👤'}</div><div>${m.message_type ? `<div class="chat-type">${m.message_type.replace('_', ' ')}</div>` : ''}<div class="chat-bubble">${m.content}</div><div class="chat-time">${new Date(m.created_at).toLocaleString()}</div></div></div>`).join('');
+    if (!messages || !messages.length) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon"><i class="ph-bold ph-chat-centered-text" style="font-size: 2rem;"></i></div><p>No messages yet. Say hi!</p></div>'; return; }
+    container.innerHTML = messages.map(m => `<div class="chat-message ${m.role}"><div class="chat-avatar">${m.role === 'warden' ? '<i class="ph-bold ph-shield-chevron"></i>' : '<i class="ph-bold ph-user"></i>'}</div><div>${m.message_type ? `<div class="chat-type">${m.message_type.replace('_', ' ')}</div>` : ''}<div class="chat-bubble">${m.content}</div><div class="chat-time">${new Date(m.created_at).toLocaleString()}</div></div></div>`).join('');
     container.scrollTop = container.scrollHeight;
 
     // Load chat history count setting
@@ -2290,7 +2307,7 @@ async function sendChatMessage(event) {
 
     // Immediately add user message to chat
     const container = document.getElementById('chat-messages');
-    const userMsgHtml = `<div class="chat-message user"><div class="chat-avatar">👤</div><div><div class="chat-bubble">${escapeHtml(message)}</div><div class="chat-time">${new Date().toLocaleString()}</div></div></div>`;
+    const userMsgHtml = `<div class="chat-message user"><div class="chat-avatar"><i class="ph-bold ph-user"></i></div><div><div class="chat-bubble">${escapeHtml(message)}</div><div class="chat-time">${new Date().toLocaleString()}</div></div></div>`;
     container.insertAdjacentHTML('beforeend', userMsgHtml);
     container.scrollTop = container.scrollHeight;
 
@@ -2303,7 +2320,7 @@ async function sendChatMessage(event) {
 
         if (response && response.reply) {
             // Add Warden's reply to chat
-            const wardenMsgHtml = `<div class="chat-message warden"><div class="chat-avatar">🔒</div><div><div class="chat-type">reply</div><div class="chat-bubble">${escapeHtml(response.reply)}</div><div class="chat-time">${new Date().toLocaleString()}</div></div></div>`;
+            const wardenMsgHtml = `<div class="chat-message warden"><div class="chat-avatar"><i class="ph-bold ph-shield-chevron"></i></div><div><div class="chat-type">reply</div><div class="chat-bubble">${escapeHtml(response.reply)}</div><div class="chat-time">${new Date().toLocaleString()}</div></div></div>`;
             container.insertAdjacentHTML('beforeend', wardenMsgHtml);
             container.scrollTop = container.scrollHeight;
         } else {
@@ -2424,7 +2441,7 @@ async function loadAgentData() {
                     <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px;">
                         <div>
                             <div style="font-weight: 500;">${f.topic}</div>
-                            <div style="font-size: 12px; color: var(--text-muted);">📅 ${dateStr} ${timeStr}</div>
+                            <div style="font-size: 12px; color: var(--text-muted);"><i class="ph-bold ph-calendar-blank"></i> ${dateStr} ${timeStr}</div>
                         </div>
                         <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="cancelFollowup(${f.id})">Cancel</button>
                     </div>
@@ -2490,8 +2507,8 @@ async function loadCommitments() {
         const dueDate = c.due_date ? new Date(c.due_date) : null;
         const dateStr = dueDate ? dueDate.toLocaleDateString() : '';
         const timeStr = dueDate ? dueDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
-        const dueDisplay = dueDate ? `📅 ${dateStr} at ${timeStr}` : '';
-        const deferredBadge = c.deferred_count > 0 ? `<span style="color: var(--warning);">🔄 Deferred ${c.deferred_count}x</span>` : '';
+        const dueDisplay = dueDate ? `<i class="ph-bold ph-calendar-blank"></i> ${dateStr} at ${timeStr}` : '';
+        const deferredBadge = c.deferred_count > 0 ? `<span style="color: var(--warning);"><i class="ph-bold ph-arrow-counter-clockwise"></i> Deferred ${c.deferred_count}x</span>` : '';
 
         if (c.status === 'pending') {
             return `<div class="list-item">
@@ -2500,8 +2517,8 @@ async function loadCommitments() {
                     <div class="list-item-meta">${dueDisplay} ${deferredBadge}</div>
                 </div>
                 <div class="list-item-actions" style="display: flex; gap: 8px; align-items: center;">
-                    <button class="btn btn-sm btn-secondary" onclick="editCommitmentTime(${c.id}, '${c.title}', '${c.due_date || ''}')">📅</button>
-                    <button class="btn btn-sm btn-success" onclick="completeCommitment(${c.id})">✓</button>
+                    <button class="btn btn-sm btn-secondary" onclick="editCommitmentTime(${c.id}, '${c.title}', '${c.due_date || ''}')"><i class="ph-bold ph-calendar-blank"></i></button>
+                    <button class="btn btn-sm btn-success" onclick="completeCommitment(${c.id})"><i class="ph-bold ph-check"></i></button>
                     <button class="btn btn-sm btn-warning" onclick="deferCommitment(${c.id})">Defer</button>
                 </div>
             </div>`;
@@ -2562,7 +2579,7 @@ async function loadGoals() {
     const goals = await api('GET', '/goals');
     const container = document.getElementById('goals-list');
     if (!goals || !goals.length) { container.innerHTML = '<div class="empty-state">No goals set</div>'; return; }
-    container.innerHTML = goals.map(g => `<div class="list-item"><div><div class="list-item-title">${g.title}</div><div class="list-item-meta">${g.description || ''} ${g.target_date ? '📅 ' + new Date(g.target_date).toLocaleDateString() : ''}</div></div><div class="list-item-actions"><button class="btn btn-sm btn-danger" onclick="deleteGoal(${g.id})">🗑️</button></div></div>`).join('');
+    container.innerHTML = goals.map(g => `<div class="list-item"><div><div class="list-item-title">${g.title}</div><div class="list-item-meta">${g.description || ''} ${g.target_date ? '<i class="ph-bold ph-calendar-blank"></i> ' + new Date(g.target_date).toLocaleDateString() : ''}</div></div><div class="list-item-actions"><button class="btn btn-sm btn-danger" onclick="deleteGoal(${g.id})"><i class="ph-bold ph-trash"></i></button></div></div>`).join('');
 }
 
 async function createGoal(e) {
@@ -2630,7 +2647,7 @@ async function loadCalendarEvents() {
     const syncStatus = document.getElementById('calendar-sync-status');
 
     if (!events || !events.length) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📅</div><p>No upcoming events. Connect Google Calendar in Settings to sync.</p></div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon"><i class="ph-bold ph-calendar-blank" style="font-size: 2rem;"></i></div><p>No upcoming events. Connect Google Calendar in Settings to sync.</p></div>';
         countBadge.textContent = '0';
         return;
     }
@@ -2976,13 +2993,13 @@ async function loadSchedules() {
         return `<div class="list-item">
             <div style="flex: 1;">
                 <div class="list-item-title">${s.name} ${statusBadge}</div>
-                <div class="list-item-meta">⏰ ${timeStr} • ${daysStr} • Type: ${s.check_in_type}</div>
+                <div class="list-item-meta"><i class="ph-bold ph-clock"></i> ${timeStr} • ${daysStr} • Type: ${s.check_in_type}</div>
                 ${s.prompt_template ? '<div class="list-item-meta" style="font-style: italic; margin-top: 4px;">Custom prompt configured</div>' : ''}
             </div>
             <div class="list-item-actions">
                 <button class="btn btn-sm btn-primary" onclick="editSchedule(${s.id}, '${s.name}', ${s.hour}, ${s.minute}, '${s.days_of_week || ''}', '${s.check_in_type}', \`${(s.prompt_template || '').replace(/`/g, '\\`')}\`)">Edit</button>
                 <button class="btn btn-sm btn-secondary" onclick="toggleSchedule(${s.id}, ${!s.is_active})">${s.is_active ? 'Pause' : 'Enable'}</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteSchedule(${s.id})">🗑️</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteSchedule(${s.id})"><i class="ph-bold ph-trash"></i></button>
             </div>
         </div>`;
     }).join('');
@@ -3210,7 +3227,7 @@ async function loadErrors() {
 
     const container = document.getElementById('errors-list');
     if (!errors || !errors.length) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><p>No errors found. System is running smoothly!</p></div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon"><i class="ph-bold ph-check-circle" style="font-size: 2rem; color: var(--success);"></i></div><p>No errors found. System is running smoothly!</p></div>';
         return;
     }
 
@@ -3229,12 +3246,12 @@ async function loadErrors() {
                     ${sourceBadge}
                 </div>
                 <div class="list-item-meta" style="margin-top: 4px; word-break: break-word;">${e.error_message}</div>
-                <div class="list-item-meta" style="margin-top: 4px; font-size: 11px;">📅 ${date}</div>
+                <div class="list-item-meta" style="margin-top: 4px; font-size: 11px;"><i class="ph-bold ph-calendar-blank"></i> ${date}</div>
             </div>
             <div class="list-item-actions" style="flex-shrink: 0;">
                 <button class="btn btn-sm btn-secondary" onclick="viewErrorDetail(${e.id})">Details</button>
                 ${!e.resolved ? `<button class="btn btn-sm btn-success" onclick="resolveError(${e.id})">Resolve</button>` : ''}
-                <button class="btn btn-sm btn-danger" onclick="deleteError(${e.id})">🗑️</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteError(${e.id})"><i class="ph-bold ph-trash"></i></button>
             </div>
         </div>`;
     }).join('');

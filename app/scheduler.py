@@ -434,6 +434,9 @@ async def silence_detector_job():
 
     async with async_session_maker() as db:
         try:
+            # Get the default user for multi-user support
+            user = await get_default_user(db)
+
             # Find last check-in
             last_checkin_result = await db.execute(
                 select(CheckIn).order_by(CheckIn.sent_at.desc()).limit(1)
@@ -493,7 +496,7 @@ async def silence_detector_job():
                 return
 
             # Time to escalate
-            context = await get_context(db)
+            context = await get_context(db, user)
             context["hours_since_response"] = hours_since
             context["last_checkin_answered"] = False
             # Add personalized context
@@ -509,6 +512,7 @@ async def silence_detector_job():
 
             # Record escalation
             checkin = CheckIn(
+                user_id=user.id,
                 check_in_type=CheckInType.ESCALATION,
                 message_sent=message,
                 telegram_message_id=msg_id,
@@ -517,6 +521,7 @@ async def silence_detector_job():
 
             # Save to chat history
             chat_msg = ChatMessage(
+                user_id=user.id,
                 role="warden",
                 content=message,
                 message_type="escalation",
@@ -540,6 +545,9 @@ async def commitment_reminder_job():
 
     async with async_session_maker() as db:
         try:
+            # Get the default user for multi-user support
+            user = await get_default_user(db)
+
             import pytz
             tz = pytz.timezone(settings.timezone)
             now = datetime.now(tz)
@@ -598,6 +606,7 @@ async def commitment_reminder_job():
 
                 # Record reminder
                 checkin = CheckIn(
+                    user_id=user.id,
                     check_in_type=CheckInType.DEADLINE_REMINDER,
                     message_sent=message,
                     telegram_message_id=msg_id,
@@ -606,6 +615,7 @@ async def commitment_reminder_job():
 
                 # Save to chat history
                 chat_msg = ChatMessage(
+                    user_id=user.id,
                     role="warden",
                     content=message,
                     message_type="deadline_reminder",
@@ -629,6 +639,9 @@ async def deadline_alert_job():
 
     async with async_session_maker() as db:
         try:
+            # Get the default user for multi-user support
+            user = await get_default_user(db)
+
             now = datetime.utcnow()
             deadline_cutoff = now + timedelta(hours=settings.deadline_alert_hours)
 
@@ -665,7 +678,7 @@ async def deadline_alert_job():
                 now_naive = now.replace(tzinfo=None) if now.tzinfo else now
                 hours_until = (due - now_naive).total_seconds() / 3600
 
-                context = await get_context(db)
+                context = await get_context(db, user)
                 context["deadline_commitment"] = {
                     "id": commitment.id,
                     "title": commitment.title,
@@ -679,6 +692,7 @@ async def deadline_alert_job():
 
                 # Record alert
                 checkin = CheckIn(
+                    user_id=user.id,
                     check_in_type=CheckInType.DEADLINE_ALERT,
                     message_sent=message,
                     telegram_message_id=msg_id,
@@ -687,6 +701,7 @@ async def deadline_alert_job():
 
                 # Save to chat history
                 chat_msg = ChatMessage(
+                    user_id=user.id,
                     role="warden",
                     content=message,
                     message_type="deadline_alert",
@@ -709,6 +724,9 @@ async def scheduled_followup_job():
 
     async with async_session_maker() as db:
         try:
+            # Get the default user for multi-user support
+            user = await get_default_user(db)
+
             now = datetime.utcnow()
 
             # Find pending follow-ups that are due
@@ -724,7 +742,7 @@ async def scheduled_followup_job():
 
             for followup in followups:
                 # Generate a message about the topic
-                context = await get_context(db)
+                context = await get_context(db, user)
                 context["followup_topic"] = followup.topic
                 context["followup_reason"] = followup.reason
 
@@ -737,6 +755,7 @@ async def scheduled_followup_job():
 
                 # Record in check-in table
                 checkin = CheckIn(
+                    user_id=user.id,
                     check_in_type=CheckInType.MANUAL,
                     message_sent=message,
                     telegram_message_id=msg_id,
@@ -745,6 +764,7 @@ async def scheduled_followup_job():
 
                 # Save to chat history
                 chat_msg = ChatMessage(
+                    user_id=user.id,
                     role="warden",
                     content=message,
                     message_type="followup",
@@ -770,6 +790,9 @@ async def weekly_insights_job():
 
     async with async_session_maker() as db:
         try:
+            # Get the default user for multi-user support
+            user = await get_default_user(db)
+
             # Calculate week range (Monday to Sunday)
             tz = pytz.timezone(settings.timezone)
             now = datetime.now(tz)
@@ -845,7 +868,7 @@ async def weekly_insights_job():
             }
 
             # Get context for LLM to generate insights
-            context = await get_context(db)
+            context = await get_context(db, user)
             context["weekly_metrics"] = metrics
             context["week_start"] = week_start.strftime("%B %d")
             context["week_end"] = week_end.strftime("%B %d")
@@ -855,6 +878,7 @@ async def weekly_insights_job():
 
             # Save insight
             insight = WeeklyInsight(
+                user_id=user.id,
                 week_start=week_start_utc,
                 week_end=week_end_utc,
                 summary=message,
@@ -865,6 +889,7 @@ async def weekly_insights_job():
 
             # Record check-in
             checkin = CheckIn(
+                user_id=user.id,
                 check_in_type=CheckInType.WEEKLY_REVIEW,
                 message_sent=message,
                 telegram_message_id=msg_id,
@@ -873,6 +898,7 @@ async def weekly_insights_job():
 
             # Save to chat history
             chat_msg = ChatMessage(
+                user_id=user.id,
                 role="warden",
                 content=message,
                 message_type="weekly_insights",
@@ -1015,8 +1041,11 @@ async def custom_schedule_job(schedule_id: int, schedule_name: str, prompt_templ
     """Execute a custom scheduled check-in job."""
     async with async_session_maker() as db:
         try:
+            # Get the default user for multi-user support
+            user = await get_default_user(db)
+
             # Build context for the message
-            context = await get_context(db)
+            context = await get_context(db, user)
 
             # Generate message using the custom prompt or default
             message = await generate_message(
@@ -1031,6 +1060,7 @@ async def custom_schedule_job(schedule_id: int, schedule_name: str, prompt_templ
 
                 # Record the check-in
                 checkin = CheckIn(
+                    user_id=user.id,
                     check_in_type=CheckInType.DAILY,
                     message_sent=message,
                     telegram_message_id=msg_id,
@@ -1039,6 +1069,7 @@ async def custom_schedule_job(schedule_id: int, schedule_name: str, prompt_templ
 
                 # Record in chat history
                 chat_msg = ChatMessage(
+                    user_id=user.id,
                     role="warden",
                     content=message,
                     message_type="custom_checkin",
