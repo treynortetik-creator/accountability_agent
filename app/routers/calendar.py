@@ -385,7 +385,9 @@ async def debug_calendar_sync(
                 if all_day:
                     start_time = datetime.strptime(start['date'], '%Y-%m-%d')
                 else:
-                    start_time = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00'))
+                    # Strip timezone - database uses TIMESTAMP WITHOUT TIME ZONE
+                    start_dt = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00'))
+                    start_time = start_dt.replace(tzinfo=None)
 
                 test_event = CalendarEvent(
                     user_id=user.id,

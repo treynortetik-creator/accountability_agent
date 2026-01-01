@@ -174,8 +174,15 @@ class CalendarService:
                     start_time = datetime.strptime(start['date'], '%Y-%m-%d')
                     end_time = datetime.strptime(end['date'], '%Y-%m-%d') if 'date' in end else None
                 else:
-                    start_time = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00'))
-                    end_time = datetime.fromisoformat(end['dateTime'].replace('Z', '+00:00')) if 'dateTime' in end else None
+                    # Parse datetime and convert to naive (strip timezone)
+                    # Database uses TIMESTAMP WITHOUT TIME ZONE
+                    start_dt = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00'))
+                    start_time = start_dt.replace(tzinfo=None)
+                    if 'dateTime' in end:
+                        end_dt = datetime.fromisoformat(end['dateTime'].replace('Z', '+00:00'))
+                        end_time = end_dt.replace(tzinfo=None)
+                    else:
+                        end_time = None
 
                 # Check if this is an OOO event
                 title = event.get('summary', '').lower()
