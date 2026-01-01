@@ -576,12 +576,17 @@ async def telegram_webhook(request: Request):
                     logger.info(f"Set accountability intensity to {suggested_intensity}")
 
             # Create response record
+            # Ensure timestamp is naive (no timezone) for PostgreSQL TIMESTAMP WITHOUT TIME ZONE
+            timestamp = parsed.get("timestamp", datetime.utcnow())
+            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is not None:
+                timestamp = timestamp.replace(tzinfo=None)
+
             response = Response(
                 user_id=user.id,
                 check_in_id=checkin.id if checkin else None,
                 message_text=message_text,
                 telegram_message_id=parsed["message_id"],
-                received_at=parsed.get("timestamp", datetime.utcnow()),
+                received_at=timestamp,
                 detected_shipped=analysis.get("shipped"),
                 detected_excuse=analysis.get("excuse"),
                 detected_avoidance=analysis.get("avoidance"),
