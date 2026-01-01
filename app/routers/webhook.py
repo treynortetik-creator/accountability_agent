@@ -419,9 +419,11 @@ async def telegram_webhook(request: Request):
             )
             last_shipped_commitment = last_shipped.scalar_one_or_none()
             if last_shipped_commitment and last_shipped_commitment.completed_at:
-                days_since_shipped = (
-                    datetime.utcnow() - last_shipped_commitment.completed_at
-                ).days
+                # Ensure both datetimes are naive for subtraction
+                completed = last_shipped_commitment.completed_at
+                if hasattr(completed, 'tzinfo') and completed.tzinfo is not None:
+                    completed = completed.replace(tzinfo=None)
+                days_since_shipped = (datetime.utcnow() - completed).days
             else:
                 days_since_shipped = "never"
             context["days_since_shipped"] = days_since_shipped
