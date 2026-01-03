@@ -233,6 +233,23 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     intensity_setting = intensity_result.scalar_one_or_none()
     accountability_intensity = int(intensity_setting.value) if intensity_setting else 3
 
+    # Get pending scheduled follow-ups for this user (so AI doesn't create duplicates)
+    followups_result = await db.execute(
+        select(ScheduledFollowup).where(
+            ScheduledFollowup.user_id == user.id,
+            ScheduledFollowup.status == "pending"
+        ).order_by(ScheduledFollowup.scheduled_time)
+    )
+    scheduled_followups = [
+        {
+            "id": f.id,
+            "topic": f.topic,
+            "reason": f.reason,
+            "scheduled_time": f.scheduled_time.isoformat() if f.scheduled_time else None,
+        }
+        for f in followups_result.scalars().all()
+    ]
+
     return {
         "goals": goals,
         "pending_commitments": pending,
@@ -246,6 +263,7 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
         "chat_history": chat_history,
         "llm_memory": llm_memory,
         "accountability_intensity": accountability_intensity,
+        "scheduled_followups": scheduled_followups,
     }
 
 
@@ -979,6 +997,15 @@ def setup_scheduler():
         replace_existing=True,
     )
     logger.info("Scheduled commitment reminders every 15 minutes")
+
+    # Scheduled follow-ups - check every 5 minutes for due follow-ups
+    scheduler.add_job(
+        scheduled_followup_job,
+        IntervalTrigger(minutes=5),
+        id="scheduled_followups",
+        replace_existing=True,
+    )
+    logger.info("Scheduled follow-up checker every 5 minutes")
 
     scheduler.start()
     logger.info("Scheduler started")

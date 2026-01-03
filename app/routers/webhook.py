@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from app.database import async_session_maker
 from app.db_models import CheckIn, Response, ChatMessage, Commitment, PendingCommitmentParse, CheckInType, CommitmentStatus, Settings as SettingsModel, ScheduledFollowup, MoodLog, ErrorLog, User
 from app.telegram_bot import parse_telegram_update, telegram_service
@@ -483,43 +483,92 @@ async def telegram_webhook(request: Request):
                         db.add(SettingsModel(user_id=user.id, key="llm_memory", value=new_memory))
                     logger.info("LLM memory updated")
 
-            # Process scheduled follow-up if provided
+            # Process scheduled follow-up if provided (with guardrails)
             followup = analysis.get("schedule_followup")
             if followup and isinstance(followup, dict) and followup.get("topic"):
-                # Parse the "when" field into a datetime
-                tz = pytz.timezone(settings.timezone)  # Use configured timezone
-                now = datetime.now(tz)
-                when_str = followup.get("when", "tomorrow").lower()
+                # GUARDRAIL 1: Check existing follow-up count (max 5)
+                existing_count_result = await db.execute(
+                    select(func.count(ScheduledFollowup.id)).where(
+                        ScheduledFollowup.user_id == user.id,
+                        ScheduledFollowup.status == "pending"
+                    )
+                )
+                existing_count = existing_count_result.scalar() or 0
 
-                # Simple parsing for common patterns
-                scheduled_time = now + timedelta(days=1)  # Default to tomorrow
-                scheduled_time = scheduled_time.replace(hour=10, minute=0, second=0, microsecond=0)
+                if existing_count >= 5:
+                    logger.info(f"Follow-up rejected: already have {existing_count} pending (max 5)")
+                else:
+                    # Parse the "when" field into a datetime
+                    tz = pytz.timezone(settings.timezone)  # Use configured timezone
+                    now = datetime.now(tz)
+                    when_str = followup.get("when", "tomorrow").lower()
 
-                if "tonight" in when_str or "this evening" in when_str:
-                    scheduled_time = now.replace(hour=19, minute=0, second=0, microsecond=0)
-                    if scheduled_time <= now:
-                        scheduled_time += timedelta(days=1)
-                elif "tomorrow morning" in when_str:
-                    scheduled_time = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-                elif "tomorrow evening" in when_str or "tomorrow night" in when_str:
-                    scheduled_time = (now + timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
-                elif "in 2 days" in when_str or "in two days" in when_str:
-                    scheduled_time = (now + timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0)
-                elif "next week" in when_str:
-                    scheduled_time = (now + timedelta(days=7)).replace(hour=10, minute=0, second=0, microsecond=0)
-                elif "in a few hours" in when_str or "later today" in when_str:
-                    scheduled_time = now + timedelta(hours=3)
+                    # Simple parsing for common patterns
+                    scheduled_time = now + timedelta(days=1)  # Default to tomorrow
+                    scheduled_time = scheduled_time.replace(hour=10, minute=0, second=0, microsecond=0)
 
-                # Convert to UTC for storage
-                scheduled_time_utc = scheduled_time.astimezone(pytz.UTC).replace(tzinfo=None)
+                    if "tonight" in when_str or "this evening" in when_str:
+                        scheduled_time = now.replace(hour=19, minute=0, second=0, microsecond=0)
+                        if scheduled_time <= now:
+                            scheduled_time += timedelta(days=1)
+                    elif "tomorrow morning" in when_str:
+                        scheduled_time = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+                    elif "tomorrow evening" in when_str or "tomorrow night" in when_str:
+                        scheduled_time = (now + timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
+                    elif "in 2 days" in when_str or "in two days" in when_str:
+                        scheduled_time = (now + timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0)
+                    elif "next week" in when_str:
+                        scheduled_time = (now + timedelta(days=7)).replace(hour=10, minute=0, second=0, microsecond=0)
+                    elif "in a few hours" in when_str or "later today" in when_str:
+                        scheduled_time = now + timedelta(hours=3)
 
-                db.add(ScheduledFollowup(
-                    user_id=user.id,
-                    topic=followup["topic"],
-                    reason=followup.get("reason"),
-                    scheduled_time=scheduled_time_utc,
-                ))
-                logger.info(f"Scheduled follow-up on '{followup['topic']}' for {scheduled_time}")
+                    # Convert to UTC for storage
+                    scheduled_time_utc = scheduled_time.astimezone(pytz.UTC).replace(tzinfo=None)
+
+                    # GUARDRAIL 2: Check for follow-ups too close together (min 4 hours apart)
+                    time_window_start = scheduled_time_utc - timedelta(hours=4)
+                    time_window_end = scheduled_time_utc + timedelta(hours=4)
+                    nearby_result = await db.execute(
+                        select(ScheduledFollowup).where(
+                            ScheduledFollowup.user_id == user.id,
+                            ScheduledFollowup.status == "pending",
+                            ScheduledFollowup.scheduled_time.between(time_window_start, time_window_end)
+                        )
+                    )
+                    nearby_followups = nearby_result.scalars().all()
+
+                    if nearby_followups:
+                        logger.info(f"Follow-up rejected: already have one scheduled within 4 hours of {scheduled_time}")
+                    else:
+                        # GUARDRAIL 3: Check for duplicate/similar topics
+                        topic_lower = followup["topic"].lower()
+                        existing_topics_result = await db.execute(
+                            select(ScheduledFollowup.topic).where(
+                                ScheduledFollowup.user_id == user.id,
+                                ScheduledFollowup.status == "pending"
+                            )
+                        )
+                        existing_topics = [t[0].lower() for t in existing_topics_result.all()]
+
+                        # Simple similarity check - if any existing topic shares 3+ words, skip
+                        topic_words = set(topic_lower.split())
+                        is_duplicate = False
+                        for existing in existing_topics:
+                            existing_words = set(existing.split())
+                            common_words = topic_words & existing_words
+                            if len(common_words) >= 3 or topic_lower in existing or existing in topic_lower:
+                                is_duplicate = True
+                                logger.info(f"Follow-up rejected: similar topic already exists - '{existing}'")
+                                break
+
+                        if not is_duplicate:
+                            db.add(ScheduledFollowup(
+                                user_id=user.id,
+                                topic=followup["topic"],
+                                reason=followup.get("reason"),
+                                scheduled_time=scheduled_time_utc,
+                            ))
+                            logger.info(f"Scheduled follow-up on '{followup['topic']}' for {scheduled_time}")
 
             # Process mood assessment if provided
             mood = analysis.get("mood_assessment")
