@@ -107,7 +107,7 @@ class Commitment(Base):
     goal_id = Column(BigInteger, ForeignKey("goals.id", ondelete="SET NULL"), nullable=True)
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
-    due_date = Column(DateTime, nullable=True)
+    due_date = Column(DateTime, nullable=True, index=True)
     status = Column(
         SQLEnum(
             CommitmentStatus,
@@ -146,8 +146,8 @@ class CheckIn(Base):
     )
     message_sent = Column(Text, nullable=False)  # What The Warden said
     telegram_message_id = Column(Text, nullable=True)
-    sent_at = Column(DateTime, default=datetime.utcnow)
-    response_received = Column(Boolean, default=False)
+    sent_at = Column(DateTime, default=datetime.utcnow, index=True)
+    response_received = Column(Boolean, default=False, index=True)
     responded_at = Column(DateTime, nullable=True)
 
     # Relationships
@@ -209,7 +209,7 @@ class Settings(Base):
 
     id = Column(BigInteger, primary_key=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    key = Column(Text, nullable=False)
+    key = Column(Text, nullable=False, index=True)
     value = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
