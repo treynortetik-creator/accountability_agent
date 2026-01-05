@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db_models import Settings, CheckInSchedule
 from app.config import get_settings
+from app.user_service import get_default_user
 
 logger = logging.getLogger(__name__)
 config = get_settings()
@@ -22,9 +23,12 @@ async def init_calendar_credentials(db: AsyncSession, base_url: str = None) -> b
     Returns True if calendar is configured (existing or newly set up).
     """
     try:
+        # Get default user for settings
+        user = await get_default_user(db)
+
         # Check if already configured with valid tokens
         result = await db.execute(
-            select(Settings).where(Settings.key == "google_calendar_token")
+            select(Settings).where(Settings.user_id == user.id, Settings.key == "google_calendar_token")
         )
         existing = result.scalar_one_or_none()
 
@@ -56,7 +60,7 @@ async def init_calendar_credentials(db: AsyncSession, base_url: str = None) -> b
         if existing:
             existing.value = json.dumps(token_data)
         else:
-            setting = Settings(key="google_calendar_token", value=json.dumps(token_data))
+            setting = Settings(user_id=user.id, key="google_calendar_token", value=json.dumps(token_data))
             db.add(setting)
 
         await db.flush()
@@ -73,14 +77,17 @@ async def init_system_prompt(db: AsyncSession) -> None:
     from app.llm import WARDEN_SYSTEM_PROMPT
 
     try:
+        # Get default user for settings
+        user = await get_default_user(db)
+
         result = await db.execute(
-            select(Settings).where(Settings.key == "system_prompt")
+            select(Settings).where(Settings.user_id == user.id, Settings.key == "system_prompt")
         )
         existing = result.scalar_one_or_none()
 
         if not existing:
             # Only create if no system prompt exists
-            setting = Settings(key="system_prompt", value=WARDEN_SYSTEM_PROMPT)
+            setting = Settings(user_id=user.id, key="system_prompt", value=WARDEN_SYSTEM_PROMPT)
             db.add(setting)
             await db.flush()
             logger.info("System prompt initialized in database")
@@ -136,8 +143,11 @@ async def init_telegram_webhook(base_url: str) -> bool:
 async def init_default_schedules(db: AsyncSession) -> None:
     """Initialize default check-in schedules if none exist."""
     try:
-        # Check if any schedules exist
-        result = await db.execute(select(CheckInSchedule))
+        # Get default user for schedules
+        user = await get_default_user(db)
+
+        # Check if any schedules exist for this user
+        result = await db.execute(select(CheckInSchedule).where(CheckInSchedule.user_id == user.id))
         existing = result.scalars().all()
 
         if existing:
@@ -147,6 +157,7 @@ async def init_default_schedules(db: AsyncSession) -> None:
         # No schedules exist - create defaults
         default_schedules = [
             CheckInSchedule(
+                user_id=user.id,
                 name="Morning Check-in",
                 check_in_type="daily_checkin",
                 hour=4,
@@ -155,6 +166,7 @@ async def init_default_schedules(db: AsyncSession) -> None:
                 is_active=True,
             ),
             CheckInSchedule(
+                user_id=user.id,
                 name="Weekly Review",
                 check_in_type="weekly_review",
                 hour=19,

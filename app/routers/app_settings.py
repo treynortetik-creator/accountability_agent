@@ -1222,7 +1222,7 @@ async def send_chat_message(
     memory_update = analysis.get("memory_update")
     if memory_update:
         memory_result = await db.execute(
-            select(Settings).where(Settings.key == "llm_memory")
+            select(Settings).where(Settings.user_id == user.id, Settings.key == "llm_memory")
         )
         memory_setting = memory_result.scalar_one_or_none()
         current_memory = memory_setting.value if memory_setting else ""
@@ -1253,7 +1253,7 @@ async def send_chat_message(
             if memory_setting:
                 memory_setting.value = new_memory
             else:
-                db.add(Settings(key="llm_memory", value=new_memory))
+                db.add(Settings(user_id=user.id, key="llm_memory", value=new_memory))
 
     # Process scheduled follow-up if provided
     followup = analysis.get("schedule_followup")

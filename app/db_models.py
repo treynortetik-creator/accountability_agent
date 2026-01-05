@@ -83,7 +83,7 @@ class Goal(Base):
 
     __tablename__ = "goals"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
@@ -102,7 +102,7 @@ class Commitment(Base):
 
     __tablename__ = "commitments"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     goal_id = Column(BigInteger, ForeignKey("goals.id", ondelete="SET NULL"), nullable=True)
     title = Column(Text, nullable=False)
@@ -133,7 +133,7 @@ class CheckIn(Base):
 
     __tablename__ = "checkins"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     check_in_type = Column(
         SQLEnum(
@@ -161,7 +161,7 @@ class Response(Base):
 
     __tablename__ = "responses"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     check_in_id = Column(BigInteger, ForeignKey("checkins.id", ondelete="SET NULL"), nullable=True)
     message_text = Column(Text, nullable=False)
@@ -184,7 +184,7 @@ class Pattern(Base):
 
     __tablename__ = "patterns"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     pattern_type = Column(
         Text, nullable=False
@@ -207,7 +207,7 @@ class Settings(Base):
         UniqueConstraint("user_id", "key", name="settings_user_id_key_unique"),
     )
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     key = Column(Text, nullable=False, index=True)
     value = Column(Text, nullable=False)
@@ -222,7 +222,7 @@ class ChatMessage(Base):
 
     __tablename__ = "chat_messages"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role = Column(Text, nullable=False)  # 'warden' or 'user'
     content = Column(Text, nullable=False)
@@ -242,7 +242,7 @@ class CalendarEvent(Base):
         UniqueConstraint("user_id", "google_event_id", name="calendar_events_user_google_unique"),
     )
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     google_event_id = Column(Text, nullable=False)
     title = Column(Text, nullable=False)
@@ -266,7 +266,7 @@ class Streak(Base):
         UniqueConstraint("user_id", "streak_type", name="streaks_user_type_unique"),
     )
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     streak_type = Column(Text, nullable=False)  # 'response' or 'completion'
     current_count = Column(Integer, default=0)
@@ -284,7 +284,7 @@ class PendingCommitmentParse(Base):
 
     __tablename__ = "pending_commitment_parses"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     original_message = Column(Text, nullable=False)
     parsed_title = Column(Text, nullable=False)
@@ -306,7 +306,7 @@ class CheckInSchedule(Base):
 
     __tablename__ = "checkin_schedules"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(Text, nullable=False)  # e.g., "Morning Check-in", "Mid-day Reminder"
     check_in_type = Column(Text, nullable=False)  # daily_checkin, custom, reminder
@@ -330,7 +330,7 @@ class CheckInPrompt(Base):
         UniqueConstraint("user_id", "prompt_type", name="checkin_prompts_user_type_unique"),
     )
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     prompt_type = Column(Text, nullable=False)  # daily_checkin, weekly_review, escalation, etc.
     prompt_template = Column(Text, nullable=False)
@@ -346,7 +346,7 @@ class ScheduledFollowup(Base):
 
     __tablename__ = "scheduled_followups"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     topic = Column(Text, nullable=False)
     reason = Column(Text, nullable=True)
@@ -364,7 +364,7 @@ class MoodLog(Base):
 
     __tablename__ = "mood_logs"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     mood_score = Column(Integer, nullable=True)  # 1-10 scale
     energy_level = Column(Text, nullable=True)  # low, medium, high
@@ -381,7 +381,7 @@ class ErrorLog(Base):
 
     __tablename__ = "error_logs"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     error_type = Column(Text, nullable=False)  # Exception class name
     error_message = Column(Text, nullable=False)
@@ -402,7 +402,7 @@ class ResponseTiming(Base):
 
     __tablename__ = "response_timings"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     check_in_id = Column(BigInteger, ForeignKey("checkins.id", ondelete="SET NULL"), nullable=True)
     response_time_minutes = Column(Integer, nullable=True)  # Time to respond in minutes
@@ -421,7 +421,7 @@ class WeeklyInsight(Base):
 
     __tablename__ = "weekly_insights"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     week_start = Column(DateTime, nullable=False)
     week_end = Column(DateTime, nullable=False)

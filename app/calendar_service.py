@@ -86,8 +86,13 @@ class CalendarService:
             logger.error(f"Failed to get calendar credentials: {e}")
             return None
 
-    async def _save_credentials(self, db: AsyncSession, creds: Credentials, client_id: str, client_secret: str):
+    async def _save_credentials(self, db: AsyncSession, creds: Credentials, client_id: str, client_secret: str, user: User = None):
         """Save credentials to database."""
+        from app.user_service import get_default_user
+
+        if user is None:
+            user = await get_default_user(db)
+
         token_data = {
             'token': creds.token,
             'refresh_token': creds.refresh_token,
@@ -97,14 +102,14 @@ class CalendarService:
         }
 
         result = await db.execute(
-            select(Settings).where(Settings.key == "google_calendar_token")
+            select(Settings).where(Settings.user_id == user.id, Settings.key == "google_calendar_token")
         )
         setting = result.scalar_one_or_none()
 
         if setting:
             setting.value = json.dumps(token_data)
         else:
-            setting = Settings(key="google_calendar_token", value=json.dumps(token_data))
+            setting = Settings(user_id=user.id, key="google_calendar_token", value=json.dumps(token_data))
             db.add(setting)
 
         await db.flush()

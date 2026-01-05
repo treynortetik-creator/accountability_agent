@@ -13,6 +13,7 @@ import httpx
 from app.database import get_db
 from app.auth import verify_api_key
 from app.db_models import CalendarEvent, Settings
+from app.user_service import get_default_user
 
 logger = logging.getLogger(__name__)
 
@@ -460,12 +461,13 @@ async def connect_calendar(
         logger.warning(f"Calendar API test failed: {e}")
 
     # Save the API key
-    result = await db.execute(select(Settings).where(Settings.key == "google_calendar_api_key"))
+    user = await get_default_user(db)
+    result = await db.execute(select(Settings).where(Settings.user_id == user.id, Settings.key == "google_calendar_api_key"))
     setting = result.scalar_one_or_none()
     if setting:
         setting.value = request.api_key
     else:
-        setting = Settings(key="google_calendar_api_key", value=request.api_key)
+        setting = Settings(user_id=user.id, key="google_calendar_api_key", value=request.api_key)
         db.add(setting)
 
     await db.flush()
@@ -478,14 +480,14 @@ async def disconnect_calendar(
     _: str = Depends(verify_api_key),
 ):
     """Disconnect Google Calendar."""
-    result = await db.execute(select(Settings).where(Settings.key == "google_calendar_api_key"))
+    user = await get_default_user(db)
+    result = await db.execute(select(Settings).where(Settings.user_id == user.id, Settings.key == "google_calendar_api_key"))
     setting = result.scalar_one_or_none()
     if setting:
         await db.delete(setting)
 
-    # Clear cached events
-    await db.execute(select(CalendarEvent))
-    events = (await db.execute(select(CalendarEvent))).scalars().all()
+    # Clear cached events for this user
+    events = (await db.execute(select(CalendarEvent).where(CalendarEvent.user_id == user.id))).scalars().all()
     for event in events:
         await db.delete(event)
 
