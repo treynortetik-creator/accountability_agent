@@ -73,10 +73,10 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # In production, specify explicit origins
+    allow_credentials=False,  # Never use credentials with wildcard origins
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["X-API-Key", "Content-Type"],
 )
 
 # Include routers
