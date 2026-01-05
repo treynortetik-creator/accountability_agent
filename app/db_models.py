@@ -76,6 +76,8 @@ class User(Base):
     pending_parses = relationship("PendingCommitmentParse", back_populates="user", cascade="all, delete-orphan")
     scheduled_followups = relationship("ScheduledFollowup", back_populates="user", cascade="all, delete-orphan")
     error_logs = relationship("ErrorLog", back_populates="user")
+    github_repos = relationship("GitHubRepo", back_populates="user", cascade="all, delete-orphan")
+    github_commits = relationship("GitHubCommit", back_populates="user", cascade="all, delete-orphan")
 
 
 class Goal(Base):
@@ -432,3 +434,43 @@ class WeeklyInsight(Base):
 
     # Relationships
     user = relationship("User", back_populates="weekly_insights")
+
+
+class GitHubRepo(Base):
+    """Configured GitHub repositories to monitor."""
+
+    __tablename__ = "github_repos"
+    __table_args__ = (
+        UniqueConstraint("user_id", "repo_owner", "repo_name", name="github_repos_user_owner_name_unique"),
+    )
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    repo_owner = Column(Text, nullable=False)
+    repo_name = Column(Text, nullable=False)
+    enabled = Column(Boolean, default=True)
+    consecutive_failures = Column(Integer, default=0)
+    last_error = Column(Text, nullable=True)
+    last_error_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="github_repos")
+    commits = relationship("GitHubCommit", back_populates="repo", cascade="all, delete-orphan")
+
+
+class GitHubCommit(Base):
+    """Fetched commit history from GitHub."""
+
+    __tablename__ = "github_commits"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    repo_id = Column(BigInteger, ForeignKey("github_repos.id", ondelete="CASCADE"), nullable=False)
+    commit_message = Column(Text, nullable=False)
+    committed_at = Column(DateTime, nullable=False)
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="github_commits")
+    repo = relationship("GitHubRepo", back_populates="commits")

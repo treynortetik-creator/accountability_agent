@@ -27,7 +27,10 @@ from app.db_models import (
     WeeklyInsight,
     ErrorLog,
     User,
+    GitHubRepo,
+    GitHubCommit,
 )
+from app.github_service import fetch_github_commits, GitHubAPIError
 from app.telegram_bot import telegram_service
 from app.llm import generate_message
 from app.patterns import PatternDetector
@@ -266,6 +269,29 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
         for f in followups_result.scalars().all()
     ]
 
+    # Get recent GitHub activity for this user
+    github_commits_result = await db.execute(
+        select(GitHubCommit)
+        .join(GitHubRepo)
+        .where(GitHubCommit.user_id == user.id)
+        .order_by(GitHubCommit.committed_at.desc())
+        .limit(20)
+    )
+    github_activity = [
+        {
+            "repo": commit.repo.repo_name,
+            "message": commit.commit_message,
+            "date": commit.committed_at.strftime("%Y-%m-%d"),
+        }
+        for commit in github_commits_result.scalars().all()
+    ]
+
+    # Calculate days since last commit
+    days_since_commit = None
+    if github_activity:
+        last_commit_date = datetime.strptime(github_activity[0]["date"], "%Y-%m-%d")
+        days_since_commit = (datetime.utcnow().date() - last_commit_date.date()).days
+
     return {
         "goals": goals,
         "pending_commitments": pending,
@@ -281,6 +307,8 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
         "user_profile": user_profile,
         "accountability_intensity": accountability_intensity,
         "scheduled_followups": scheduled_followups,
+        "github_activity": github_activity,
+        "days_since_commit": days_since_commit,
     }
 
 
@@ -996,6 +1024,205 @@ async def weekly_insights_job():
             await log_scheduler_error("weekly_insights", e)
 
 
+async def github_poll_job():
+    """Fetch recent commits from configured GitHub repositories."""
+    logger.info("Running GitHub poll job")
+
+    async with async_session_maker() as db:
+        try:
+            # Get all active users
+            users = await get_all_active_users(db)
+            if not users:
+                return
+
+            for user in users:
+                try:
+                    # Get GitHub PAT from settings
+                    pat_result = await db.execute(
+                        select(Settings).where(
+                            Settings.user_id == user.id,
+                            Settings.key == "github_pat"
+                        )
+                    )
+                    pat_setting = pat_result.scalar_one_or_none()
+                    if not pat_setting or not pat_setting.value:
+                        continue  # GitHub not configured for this user
+
+                    # Get retention days setting
+                    retention_result = await db.execute(
+                        select(Settings).where(
+                            Settings.user_id == user.id,
+                            Settings.key == "github_retention_days"
+                        )
+                    )
+                    retention_setting = retention_result.scalar_one_or_none()
+                    retention_days = int(retention_setting.value) if retention_setting else 7
+
+                    # Get enabled repos
+                    repos_result = await db.execute(
+                        select(GitHubRepo).where(
+                            GitHubRepo.user_id == user.id,
+                            GitHubRepo.enabled == True
+                        )
+                    )
+                    repos = repos_result.scalars().all()
+
+                    for repo in repos:
+                        try:
+                            commits = await fetch_github_commits(
+                                pat_setting.value,
+                                repo.repo_owner,
+                                repo.repo_name,
+                                since_days=retention_days
+                            )
+
+                            # Store new commits (avoid duplicates by checking committed_at + message)
+                            for commit_data in commits:
+                                # Check if commit already exists
+                                existing = await db.execute(
+                                    select(GitHubCommit).where(
+                                        GitHubCommit.repo_id == repo.id,
+                                        GitHubCommit.committed_at == commit_data["committed_at"],
+                                        GitHubCommit.commit_message == commit_data["message"]
+                                    )
+                                )
+                                if existing.scalar_one_or_none():
+                                    continue
+
+                                new_commit = GitHubCommit(
+                                    user_id=user.id,
+                                    repo_id=repo.id,
+                                    commit_message=commit_data["message"],
+                                    committed_at=commit_data["committed_at"],
+                                )
+                                db.add(new_commit)
+
+                            # Reset failure count on success
+                            repo.consecutive_failures = 0
+                            repo.last_error = None
+                            repo.last_error_at = None
+
+                            logger.info(f"Fetched {len(commits)} commits from {repo.repo_owner}/{repo.repo_name}")
+
+                        except GitHubAPIError as e:
+                            repo.consecutive_failures += 1
+                            repo.last_error = str(e.message)
+                            repo.last_error_at = datetime.utcnow()
+
+                            logger.warning(f"GitHub API error for {repo.repo_owner}/{repo.repo_name}: {e.message}")
+
+                            # Notify user after 3 consecutive failures
+                            if repo.consecutive_failures >= 3:
+                                await telegram_service.send_message(
+                                    f"Hey, I've been trying to check your GitHub activity but something's wrong. "
+                                    f"Failed 3 times on {repo.repo_owner}/{repo.repo_name}: {e.message}. "
+                                    f"Might want to check your access token. I've paused monitoring that repo for now.",
+                                    chat_id=user.telegram_chat_id
+                                )
+                                repo.enabled = False
+                                logger.warning(f"Disabled repo {repo.repo_owner}/{repo.repo_name} after 3 failures")
+
+                    await db.commit()
+
+                except Exception as e:
+                    logger.error(f"GitHub poll failed for user {user.id}: {e}", exc_info=True)
+                    await log_scheduler_error("github_poll", e, user_id=user.id)
+
+        except Exception as e:
+            logger.error(f"GitHub poll job failed: {e}", exc_info=True)
+            await log_scheduler_error("github_poll", e)
+
+
+async def github_cleanup_job():
+    """Remove commits older than retention period."""
+    logger.info("Running GitHub cleanup job")
+
+    async with async_session_maker() as db:
+        try:
+            users = await get_all_active_users(db)
+            if not users:
+                return
+
+            for user in users:
+                # Get retention days setting
+                retention_result = await db.execute(
+                    select(Settings).where(
+                        Settings.user_id == user.id,
+                        Settings.key == "github_retention_days"
+                    )
+                )
+                retention_setting = retention_result.scalar_one_or_none()
+                retention_days = int(retention_setting.value) if retention_setting else 7
+
+                cutoff = datetime.utcnow() - timedelta(days=retention_days)
+
+                # Delete old commits
+                from sqlalchemy import delete
+                result = await db.execute(
+                    delete(GitHubCommit).where(
+                        GitHubCommit.user_id == user.id,
+                        GitHubCommit.committed_at < cutoff
+                    )
+                )
+                deleted_count = result.rowcount
+
+                if deleted_count > 0:
+                    logger.info(f"Cleaned up {deleted_count} old GitHub commits for user {user.id}")
+
+            await db.commit()
+
+        except Exception as e:
+            logger.error(f"GitHub cleanup job failed: {e}", exc_info=True)
+            await log_scheduler_error("github_cleanup", e)
+
+
+async def schedule_github_poll():
+    """Schedule or reschedule the GitHub poll job based on user settings."""
+    async with async_session_maker() as db:
+        try:
+            user = await get_default_user(db)
+
+            # Get poll time settings
+            hour_result = await db.execute(
+                select(Settings).where(
+                    Settings.user_id == user.id,
+                    Settings.key == "github_poll_hour"
+                )
+            )
+            minute_result = await db.execute(
+                select(Settings).where(
+                    Settings.user_id == user.id,
+                    Settings.key == "github_poll_minute"
+                )
+            )
+
+            hour_setting = hour_result.scalar_one_or_none()
+            minute_setting = minute_result.scalar_one_or_none()
+
+            poll_hour = int(hour_setting.value) if hour_setting else 3
+            poll_minute = int(minute_setting.value) if minute_setting else 30
+
+            tz = pytz.timezone(settings.timezone)
+
+            # Remove existing job if present
+            try:
+                scheduler.remove_job("github_poll")
+            except Exception:
+                pass
+
+            # Add job with configured time
+            scheduler.add_job(
+                github_poll_job,
+                CronTrigger(hour=poll_hour, minute=poll_minute, timezone=tz),
+                id="github_poll",
+                replace_existing=True,
+            )
+            logger.info(f"Scheduled GitHub poll at {poll_hour}:{poll_minute:02d}")
+
+        except Exception as e:
+            logger.error(f"Failed to schedule GitHub poll: {e}", exc_info=True)
+
+
 def setup_scheduler():
     """Configure and start the scheduler."""
     tz = pytz.timezone(settings.timezone)
@@ -1041,6 +1268,18 @@ def setup_scheduler():
         replace_existing=True,
     )
     logger.info("Scheduled follow-up checker every 5 minutes")
+
+    # GitHub cleanup - daily at 4:00 AM (after poll typically runs at 3:30 AM)
+    scheduler.add_job(
+        github_cleanup_job,
+        CronTrigger(hour=4, minute=0, timezone=tz),
+        id="github_cleanup",
+        replace_existing=True,
+    )
+    logger.info("Scheduled GitHub cleanup at 4:00 AM")
+
+    # NOTE: GitHub poll job is scheduled dynamically based on user settings
+    # Call schedule_github_poll() after startup to set up the poll schedule
 
     scheduler.start()
     logger.info("Scheduler started")

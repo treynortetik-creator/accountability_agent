@@ -1562,6 +1562,18 @@ h4 { font-size: 1rem; }
                         </div>
                         <div id="patterns-list"><div class="empty-state">Loading...</div></div>
                     </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title"><i class="ph-bold ph-git-branch"></i> GitHub Activity</h3>
+                            <button class="btn btn-sm btn-secondary" onclick="refreshGitHub()"><i class="ph-bold ph-arrows-clockwise"></i></button>
+                        </div>
+                        <div id="github-activity-widget">
+                            <div class="empty-state">
+                                <div style="font-size: 1.5rem; margin-bottom: 8px;"><i class="ph-bold ph-git-branch"></i></div>
+                                <p style="font-size: 0.75rem; color: var(--ash);">Configure in Systems</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -2078,6 +2090,81 @@ h4 { font-size: 1rem; }
                         <div id="webhook-details"></div>
                     </div>
                 </div>
+
+                <!-- GitHub Integration -->
+                <div class="card mt-lg">
+                    <div class="card-header">
+                        <h3 class="card-title"><i class="ph-bold ph-git-branch"></i> GitHub Integration</h3>
+                        <span id="github-status" class="badge badge-pending">Not Configured</span>
+                    </div>
+                    <p style="color: var(--smoke); font-size: 0.8125rem; margin-bottom: 16px;">
+                        Connect GitHub to give The Warden visibility into your coding activity for informed accountability.
+                    </p>
+
+                    <!-- Token Section -->
+                    <div class="form-group">
+                        <label class="form-label">Personal Access Token</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="password" id="github-pat" class="form-input" placeholder="ghp_xxxxxxxxxxxx" style="flex: 1;" />
+                            <button class="btn btn-primary" onclick="saveGitHubToken()">Save Token</button>
+                            <button class="btn btn-secondary" onclick="testGitHubToken()">Test</button>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 16px; padding: 8px 12px; background: var(--obsidian); border-radius: 6px; font-size: 0.6875rem; color: var(--ash);">
+                        Generate at <a href="https://github.com/settings/tokens/new" target="_blank" style="color: var(--neon-cyan);">github.com/settings/tokens</a> with <code style="background: var(--void); padding: 1px 4px; border-radius: 3px;">repo</code> scope (read-only is fine)
+                    </div>
+
+                    <!-- Repos Section -->
+                    <div class="form-group">
+                        <label class="form-label">Monitored Repositories</label>
+                        <div id="github-repos-list" style="margin-bottom: 12px;">
+                            <div class="empty-state" style="padding: 16px; font-size: 0.75rem;">No repositories configured</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="showAddRepoModal()"><i class="ph-bold ph-plus"></i> Add Repository</button>
+                    </div>
+
+                    <!-- Schedule Section -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+                        <div class="form-group">
+                            <label class="form-label">Poll Schedule</label>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="number" id="github-poll-hour" class="form-input" style="width: 60px;" min="0" max="23" value="3" />
+                                <span style="color: var(--smoke);">:</span>
+                                <input type="number" id="github-poll-minute" class="form-input" style="width: 60px;" min="0" max="59" value="30" />
+                                <button class="btn btn-sm btn-secondary" onclick="saveGitHubSchedule()">Save</button>
+                            </div>
+                            <div style="font-size: 0.6875rem; color: var(--ash); margin-top: 4px;">Default: 3:30 AM (before morning check-in)</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Data Retention</label>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="number" id="github-retention" class="form-input" style="width: 60px;" min="1" max="30" value="7" />
+                                <span style="color: var(--smoke);">days</span>
+                                <button class="btn btn-sm btn-secondary" onclick="saveGitHubRetention()">Save</button>
+                            </div>
+                            <div style="font-size: 0.6875rem; color: var(--ash); margin-top: 4px;">How long to keep commit history</div>
+                        </div>
+                    </div>
+
+                    <!-- Manual Poll -->
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--chrome);">
+                        <button class="btn btn-secondary" onclick="triggerGitHubPoll()"><i class="ph-bold ph-arrows-clockwise"></i> Poll Now</button>
+                        <span id="github-poll-status" style="margin-left: 12px; font-size: 0.75rem; color: var(--ash);"></span>
+                    </div>
+                </div>
+
+                <!-- Add Repo Modal -->
+                <div id="add-repo-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center;">
+                    <div style="background: var(--steel); border: 1px solid var(--chrome); border-radius: 12px; padding: 24px; max-width: 500px; width: 90%;">
+                        <h3 style="margin-bottom: 16px; color: var(--holo-white);">Add Repository</h3>
+                        <div id="available-repos-list" style="max-height: 300px; overflow-y: auto;">
+                            <div class="empty-state">Loading available repos...</div>
+                        </div>
+                        <div style="margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px;">
+                            <button class="btn btn-secondary" onclick="hideAddRepoModal()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- ============================================================
@@ -2247,12 +2334,12 @@ function showSection(name) {
     document.querySelectorAll('.rail-item').forEach(n => n.classList.remove('active'));
     document.getElementById('section-' + name).classList.add('active');
     event.target.closest('.rail-item').classList.add('active');
-    if (name === 'dashboard') loadPatterns();
+    if (name === 'dashboard') { loadPatterns(); loadGitHubActivity(); }
     if (name === 'chat') loadChatHistory();
     if (name === 'commitments') loadCommitments();
     if (name === 'goals') loadGoals();
     if (name === 'calendar') loadCalendarEvents();
-    if (name === 'settings') loadSettings();
+    if (name === 'settings') { loadSettings(); loadGitHubSettings(); }
     if (name === 'errors') loadErrors();
     // Close sidebar on mobile after navigation
     closeSidebar();
@@ -2290,8 +2377,9 @@ async function loadDashboard() {
         document.getElementById('streak-completion-best').textContent = compStreak.best > 0 ? `Best: ${compStreak.best} weeks` : '';
     }
 
-    // Load patterns separately
+    // Load patterns and GitHub activity separately
     loadPatterns();
+    loadGitHubActivity();
 
     const checkins = await api('GET', '/checkins?limit=5');
     document.getElementById('recent-activity').innerHTML = checkins && checkins.length
@@ -3034,6 +3122,252 @@ async function checkWebhookStatus() {
         statusBadge.textContent = 'Error';
         statusBadge.className = 'badge badge-overdue';
     }
+}
+
+// ============================================================
+// GitHub Integration Functions
+// ============================================================
+
+async function loadGitHubSettings() {
+    try {
+        const data = await api('GET', '/github');
+        const statusBadge = document.getElementById('github-status');
+
+        if (data.has_token && data.repos.length > 0) {
+            statusBadge.textContent = 'Active';
+            statusBadge.className = 'badge badge-completed';
+        } else if (data.has_token) {
+            statusBadge.textContent = 'No Repos';
+            statusBadge.className = 'badge badge-pending';
+        } else {
+            statusBadge.textContent = 'Not Configured';
+            statusBadge.className = 'badge badge-pending';
+        }
+
+        // Set form values
+        document.getElementById('github-poll-hour').value = data.poll_hour;
+        document.getElementById('github-poll-minute').value = data.poll_minute;
+        document.getElementById('github-retention').value = data.retention_days;
+
+        // Render repos list
+        renderGitHubRepos(data.repos);
+
+    } catch (e) {
+        console.error('Failed to load GitHub settings:', e);
+    }
+}
+
+function renderGitHubRepos(repos) {
+    const container = document.getElementById('github-repos-list');
+    if (!repos || repos.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding: 16px; font-size: 0.75rem;">No repositories configured</div>';
+        return;
+    }
+
+    container.innerHTML = repos.map(r => `
+        <div class="list-item" style="padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--chrome);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleGitHubRepo(${r.id})" />
+                <span style="font-family: 'Share Tech Mono', monospace; font-size: 0.8125rem;">${r.full_name}</span>
+                ${r.consecutive_failures > 0 ? `<span class="badge badge-overdue" style="font-size: 0.625rem;">${r.consecutive_failures} failures</span>` : ''}
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="removeGitHubRepo(${r.id})"><i class="ph-bold ph-trash"></i></button>
+        </div>
+    `).join('');
+}
+
+async function saveGitHubToken() {
+    const token = document.getElementById('github-pat').value.trim();
+    if (!token) {
+        showToast('Please enter a token', 'error');
+        return;
+    }
+
+    try {
+        const result = await api('POST', '/github/token', { token });
+        showToast(result.message || 'Token saved');
+        document.getElementById('github-pat').value = '';
+        loadGitHubSettings();
+    } catch (e) {
+        showToast('Failed to save token: ' + (e.message || 'Invalid token'), 'error');
+    }
+}
+
+async function testGitHubToken() {
+    try {
+        const result = await api('GET', '/github/token/test');
+        if (result.valid) {
+            showToast(result.message);
+        } else {
+            showToast(result.message, 'error');
+        }
+    } catch (e) {
+        showToast('Token test failed', 'error');
+    }
+}
+
+async function toggleGitHubRepo(repoId) {
+    try {
+        await api('PUT', `/github/repos/${repoId}/toggle`);
+        loadGitHubSettings();
+    } catch (e) {
+        showToast('Failed to toggle repo', 'error');
+    }
+}
+
+async function removeGitHubRepo(repoId) {
+    if (!confirm('Remove this repository from monitoring?')) return;
+
+    try {
+        await api('DELETE', `/github/repos/${repoId}`);
+        showToast('Repository removed');
+        loadGitHubSettings();
+    } catch (e) {
+        showToast('Failed to remove repo', 'error');
+    }
+}
+
+async function showAddRepoModal() {
+    document.getElementById('add-repo-modal').style.display = 'flex';
+
+    try {
+        const result = await api('GET', '/github/repos/available');
+        const container = document.getElementById('available-repos-list');
+
+        if (!result.repos || result.repos.length === 0) {
+            container.innerHTML = '<div class="empty-state">No available repositories. Make sure your token has repo access.</div>';
+            return;
+        }
+
+        container.innerHTML = result.repos.map(r => `
+            <div class="list-item" style="padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--chrome); cursor: pointer;" onclick="addGitHubRepo('${r.owner}', '${r.name}')">
+                <span style="font-family: 'Share Tech Mono', monospace; font-size: 0.8125rem;">${r.full_name}</span>
+                <span style="font-size: 0.6875rem; color: var(--ash);">${r.private ? 'Private' : 'Public'}</span>
+            </div>
+        `).join('');
+    } catch (e) {
+        document.getElementById('available-repos-list').innerHTML = '<div class="empty-state">Failed to load repos. Check your token.</div>';
+    }
+}
+
+function hideAddRepoModal() {
+    document.getElementById('add-repo-modal').style.display = 'none';
+}
+
+async function addGitHubRepo(owner, name) {
+    try {
+        await api('POST', '/github/repos', { owner, name });
+        showToast(`Added ${owner}/${name}`);
+        hideAddRepoModal();
+        loadGitHubSettings();
+    } catch (e) {
+        showToast('Failed to add repo', 'error');
+    }
+}
+
+async function saveGitHubSchedule() {
+    const hour = parseInt(document.getElementById('github-poll-hour').value);
+    const minute = parseInt(document.getElementById('github-poll-minute').value);
+
+    try {
+        await api('PUT', '/github/schedule', { hour, minute });
+        showToast(`Poll schedule updated to ${hour}:${minute.toString().padStart(2, '0')}`);
+    } catch (e) {
+        showToast('Failed to update schedule', 'error');
+    }
+}
+
+async function saveGitHubRetention() {
+    const days = parseInt(document.getElementById('github-retention').value);
+
+    try {
+        await api('PUT', '/github/retention', { days });
+        showToast(`Retention set to ${days} days`);
+    } catch (e) {
+        showToast('Failed to update retention', 'error');
+    }
+}
+
+async function triggerGitHubPoll() {
+    const statusEl = document.getElementById('github-poll-status');
+    statusEl.textContent = 'Polling...';
+
+    try {
+        await api('POST', '/github/poll');
+        statusEl.textContent = 'Poll completed!';
+        showToast('GitHub poll completed');
+        loadGitHubActivity();
+    } catch (e) {
+        statusEl.textContent = 'Poll failed';
+        showToast('Poll failed', 'error');
+    }
+}
+
+async function loadGitHubActivity() {
+    const container = document.getElementById('github-activity-widget');
+
+    try {
+        const commits = await api('GET', '/github/commits?limit=10');
+
+        if (!commits || commits.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;"><i class="ph-bold ph-git-branch"></i></div>
+                    <p style="font-size: 0.75rem; color: var(--ash);">No recent commits</p>
+                </div>
+            `;
+            return;
+        }
+
+        const grouped = {};
+        commits.forEach(c => {
+            if (!grouped[c.repo_name]) grouped[c.repo_name] = [];
+            grouped[c.repo_name].push(c);
+        });
+
+        let html = '';
+        for (const [repo, repoCommits] of Object.entries(grouped)) {
+            html += `<div style="margin-bottom: 12px;">`;
+            html += `<div style="font-size: 0.6875rem; color: var(--neon-cyan); font-family: 'Share Tech Mono', monospace; margin-bottom: 4px;">${repo}</div>`;
+            repoCommits.slice(0, 3).forEach(c => {
+                const date = new Date(c.committed_at);
+                const ago = getTimeAgo(date);
+                html += `<div style="font-size: 0.75rem; color: var(--smoke); padding: 2px 0; display: flex; justify-content: space-between;">
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%;">${c.commit_message}</span>
+                    <span style="color: var(--ash); font-size: 0.625rem;">${ago}</span>
+                </div>`;
+            });
+            html += `</div>`;
+        }
+
+        html += `<div style="font-size: 0.625rem; color: var(--ash); margin-top: 8px;">${commits.length} commits in history</div>`;
+        container.innerHTML = html;
+
+    } catch (e) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div style="font-size: 1.5rem; margin-bottom: 8px;"><i class="ph-bold ph-git-branch"></i></div>
+                <p style="font-size: 0.75rem; color: var(--ash);">Configure in Systems</p>
+            </div>
+        `;
+    }
+}
+
+function getTimeAgo(date) {
+    const now = new Date();
+    const diff = now - date;
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (days > 0) return `${days}d ago`;
+    if (hours > 0) return `${hours}h ago`;
+    if (mins > 0) return `${mins}m ago`;
+    return 'just now';
+}
+
+function refreshGitHub() {
+    loadGitHubActivity();
 }
 
 function renderModelDropdown(models, selectedId) {
