@@ -1,6 +1,7 @@
 """Telegram webhook router."""
 
 import logging
+import secrets
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select, and_, func
@@ -299,6 +300,13 @@ async def try_parse_commitment(db, message_text: str, context: dict, user: User)
 @router.post("/telegram")
 async def telegram_webhook(request: Request):
     """Handle incoming Telegram messages."""
+    # Validate webhook secret if configured
+    if settings.telegram_webhook_secret:
+        secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not secrets.compare_digest(secret_header, settings.telegram_webhook_secret):
+            logger.warning("Invalid webhook secret token received")
+            raise HTTPException(status_code=403, detail="Invalid secret token")
+
     try:
         update_data = await request.json()
     except Exception as e:
