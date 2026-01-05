@@ -1000,20 +1000,11 @@ def setup_scheduler():
     """Configure and start the scheduler."""
     tz = pytz.timezone(settings.timezone)
 
-    # Daily check-in at configured time
-    scheduler.add_job(
-        daily_checkin_job,
-        CronTrigger(
-            hour=settings.daily_checkin_hour,
-            minute=settings.daily_checkin_minute,
-            timezone=tz,
-        ),
-        id="daily_checkin",
-        replace_existing=True,
-    )
-    logger.info(
-        f"Scheduled daily check-in at {settings.daily_checkin_hour}:{settings.daily_checkin_minute:02d} {settings.timezone}"
-    )
+    # NOTE: Daily check-in is now managed via custom schedules in the database
+    # (checkin_schedules table). The hardcoded job was removed to prevent
+    # duplicate check-ins. Use the dashboard Settings > Check-in Schedules
+    # to configure check-in times.
+    logger.info("Daily check-ins managed via custom schedules (checkin_schedules table)")
 
     # Weekly review on Sunday evening
     day_map = {"sun": 6, "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5}
@@ -1086,28 +1077,18 @@ async def reschedule_jobs(config: dict):
 
     Args:
         config: Dict with schedule configuration keys:
-            - daily_checkin_hour
-            - daily_checkin_minute
             - weekly_review_day
             - weekly_review_hour
             - weekly_review_minute
+
+    NOTE: Daily check-in is now managed via custom schedules in the database.
+    Use the dashboard Settings > Check-in Schedules to modify check-in times.
     """
     tz = pytz.timezone(settings.timezone)
     day_map = {"sun": 6, "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5}
 
-    # Reschedule daily check-in
-    daily_hour = config.get("daily_checkin_hour", settings.daily_checkin_hour)
-    daily_minute = config.get("daily_checkin_minute", settings.daily_checkin_minute)
-
-    scheduler.reschedule_job(
-        "daily_checkin",
-        trigger=CronTrigger(
-            hour=daily_hour,
-            minute=daily_minute,
-            timezone=tz,
-        ),
-    )
-    logger.info(f"Rescheduled daily check-in to {daily_hour}:{daily_minute:02d}")
+    # NOTE: Daily check-in rescheduling removed - use custom schedules instead
+    # via reload_custom_schedules() or the dashboard
 
     # Reschedule weekly review
     weekly_day = config.get("weekly_review_day", settings.weekly_review_day)
