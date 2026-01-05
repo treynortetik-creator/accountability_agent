@@ -124,49 +124,6 @@ async def health():
     return {"status": "healthy", "scheduler": "running"}
 
 
-@app.get("/debug/auth")
-async def debug_auth():
-    """Debug endpoint to check auth config (remove in production)."""
-    from app.config import get_settings
-    s = get_settings()
-    return {
-        "api_key_configured": bool(s.api_key),
-        "api_key_length": len(s.api_key) if s.api_key else 0,
-        "api_key_first_5": s.api_key[:5] if s.api_key and len(s.api_key) >= 5 else "N/A",
-        "api_key_last_3": s.api_key[-3:] if s.api_key and len(s.api_key) >= 3 else "N/A",
-        "telegram_chat_id_set": bool(s.telegram_chat_id),
-        "database_url_type": "postgresql" if "postgresql" in s.database_url else "sqlite",
-    }
-
-
-@app.get("/debug/db")
-async def debug_db():
-    """Debug endpoint to test database connection."""
-    from app.config import get_settings
-    from app.database import async_session_maker
-    from sqlalchemy import text
-
-    s = get_settings()
-    result = {
-        "database_url_prefix": s.database_url[:60] + "..." if len(s.database_url) > 60 else s.database_url,
-        "database_url_contains_pooler": "pooler.supabase.com" in s.database_url,
-        "database_url_port": "6543" if ":6543" in s.database_url else ("5432" if ":5432" in s.database_url else "unknown"),
-    }
-
-    try:
-        async with async_session_maker() as db:
-            query_result = await db.execute(text("SELECT 1 as test"))
-            row = query_result.fetchone()
-            result["connection"] = "SUCCESS"
-            result["query_result"] = row[0] if row else None
-    except Exception as e:
-        result["connection"] = "FAILED"
-        result["error_type"] = type(e).__name__
-        result["error_message"] = str(e)
-
-    return result
-
-
 @app.post("/api/trigger/checkin")
 async def trigger_checkin(
     request: ManualCheckInRequest = None,
