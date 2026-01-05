@@ -1000,30 +1000,11 @@ def setup_scheduler():
     """Configure and start the scheduler."""
     tz = pytz.timezone(settings.timezone)
 
-    # NOTE: Daily check-in is now managed via custom schedules in the database
-    # (checkin_schedules table). The hardcoded job was removed to prevent
-    # duplicate check-ins. Use the dashboard Settings > Check-in Schedules
+    # NOTE: Daily check-ins and weekly reviews are now managed via custom schedules
+    # in the database (checkin_schedules table). The hardcoded jobs were removed to
+    # prevent duplicate check-ins. Use the dashboard Settings > Check-in Schedules
     # to configure check-in times.
-    logger.info("Daily check-ins managed via custom schedules (checkin_schedules table)")
-
-    # Weekly review on Sunday evening
-    day_map = {"sun": 6, "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5}
-    day_of_week = day_map.get(settings.weekly_review_day.lower(), 6)
-
-    scheduler.add_job(
-        weekly_review_job,
-        CronTrigger(
-            day_of_week=day_of_week,
-            hour=settings.weekly_review_hour,
-            minute=settings.weekly_review_minute,
-            timezone=tz,
-        ),
-        id="weekly_review",
-        replace_existing=True,
-    )
-    logger.info(
-        f"Scheduled weekly review on {settings.weekly_review_day} at {settings.weekly_review_hour}:{settings.weekly_review_minute:02d}"
-    )
+    logger.info("Check-ins managed via custom schedules (checkin_schedules table)")
 
     # Silence detector every 12 hours
     scheduler.add_job(
@@ -1075,37 +1056,14 @@ def shutdown_scheduler():
 async def reschedule_jobs(config: dict):
     """Reschedule jobs with new configuration.
 
-    Args:
-        config: Dict with schedule configuration keys:
-            - weekly_review_day
-            - weekly_review_hour
-            - weekly_review_minute
+    NOTE: Daily check-ins and weekly reviews are now managed via custom schedules
+    in the database (checkin_schedules table). Use reload_custom_schedules() or
+    the dashboard Settings > Check-in Schedules to modify check-in times.
 
-    NOTE: Daily check-in is now managed via custom schedules in the database.
-    Use the dashboard Settings > Check-in Schedules to modify check-in times.
+    This function is kept for backwards compatibility but no longer reschedules
+    hardcoded jobs. Use reload_custom_schedules() instead.
     """
-    tz = pytz.timezone(settings.timezone)
-    day_map = {"sun": 6, "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5}
-
-    # NOTE: Daily check-in rescheduling removed - use custom schedules instead
-    # via reload_custom_schedules() or the dashboard
-
-    # Reschedule weekly review
-    weekly_day = config.get("weekly_review_day", settings.weekly_review_day)
-    weekly_hour = config.get("weekly_review_hour", settings.weekly_review_hour)
-    weekly_minute = config.get("weekly_review_minute", settings.weekly_review_minute)
-    day_of_week = day_map.get(weekly_day.lower(), 6)
-
-    scheduler.reschedule_job(
-        "weekly_review",
-        trigger=CronTrigger(
-            day_of_week=day_of_week,
-            hour=weekly_hour,
-            minute=weekly_minute,
-            timezone=tz,
-        ),
-    )
-    logger.info(f"Rescheduled weekly review to {weekly_day} at {weekly_hour}:{weekly_minute:02d}")
+    logger.info("reschedule_jobs called - use reload_custom_schedules() for custom schedules")
 
 
 async def custom_schedule_job(schedule_id: int, schedule_name: str, prompt_template: str = None):
