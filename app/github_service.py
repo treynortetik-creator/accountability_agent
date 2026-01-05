@@ -150,7 +150,13 @@ async def fetch_user_repos(pat: str) -> list[dict]:
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{GITHUB_API_BASE}/user/repos",
-                params={"per_page": 100, "sort": "pushed", "direction": "desc"},
+                params={
+                    "per_page": 100,
+                    "sort": "pushed",
+                    "direction": "desc",
+                    "visibility": "all",  # Include public AND private repos
+                    "affiliation": "owner,collaborator,organization_member",  # All repo types
+                },
                 headers={
                     "Authorization": f"Bearer {pat}",
                     "Accept": "application/vnd.github+json",
