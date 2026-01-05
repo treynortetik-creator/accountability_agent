@@ -6,6 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from app.database import get_db
 from app.auth import verify_api_key
@@ -353,7 +354,7 @@ async def get_recent_commits(
 
     result = await db.execute(
         select(GitHubCommit)
-        .join(GitHubRepo)
+        .options(selectinload(GitHubCommit.repo))
         .where(GitHubCommit.user_id == user.id)
         .order_by(GitHubCommit.committed_at.desc())
         .limit(limit)
