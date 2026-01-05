@@ -452,104 +452,122 @@ async def silence_detector_job():
 
     async with async_session_maker() as db:
         try:
-            # Get the default user for multi-user support
-            user = await get_default_user(db)
-
-            # Find last check-in
-            last_checkin_result = await db.execute(
-                select(CheckIn).order_by(CheckIn.sent_at.desc()).limit(1)
-            )
-            last_checkin = last_checkin_result.scalar_one_or_none()
-
-            if not last_checkin:
-                logger.info("No check-ins found, skipping silence detection")
+            # Get all active users
+            users = await get_all_active_users(db)
+            if not users:
+                logger.warning("No active users found, skipping silence detection")
                 return
 
-            # If last check-in was answered, no escalation needed
-            if last_checkin.response_received:
-                logger.info("Last check-in was answered, no escalation needed")
-                return
-
-            # Calculate hours since last check-in
-            # Ensure sent_at is naive (no timezone) for subtraction
-            sent_at = last_checkin.sent_at
-            if hasattr(sent_at, 'tzinfo') and sent_at.tzinfo is not None:
-                sent_at = sent_at.replace(tzinfo=None)
-            hours_since = (datetime.utcnow() - sent_at).total_seconds() / 3600
-
-            # ENHANCED: Calculate personalized threshold based on user's typical response time
-            avg_response_result = await db.execute(
-                select(func.avg(ResponseTiming.response_time_minutes)).where(
-                    ResponseTiming.did_respond == True
-                )
-            )
-            avg_response_minutes = avg_response_result.scalar()
-
-            # Use personalized threshold if we have enough data, otherwise use default
-            if avg_response_minutes and avg_response_minutes > 0:
-                # If they usually respond in X minutes, alert after 3x that time (minimum 2 hours)
-                personalized_threshold_hours = max(2, (avg_response_minutes * 3) / 60)
-                # But don't exceed the configured maximum
-                threshold_hours = min(personalized_threshold_hours, settings.silence_threshold_hours)
-                logger.info(f"Using personalized silence threshold: {threshold_hours:.1f}h (avg response: {avg_response_minutes:.0f}min)")
-            else:
-                threshold_hours = settings.silence_threshold_hours
-
-            if hours_since < threshold_hours:
-                logger.info(f"Only {hours_since:.1f} hours since last check-in, under threshold ({threshold_hours:.1f}h)")
-                return
-
-            # Check if we already escalated recently (within 12 hours)
-            twelve_hours_ago = datetime.utcnow() - timedelta(hours=12)
-            recent_escalation = await db.execute(
-                select(CheckIn).where(
-                    and_(
-                        CheckIn.check_in_type == CheckInType.ESCALATION,
-                        CheckIn.sent_at > twelve_hours_ago,
+            for user in users:
+                try:
+                    # Find last check-in for this user
+                    last_checkin_result = await db.execute(
+                        select(CheckIn)
+                        .where(CheckIn.user_id == user.id)
+                        .order_by(CheckIn.sent_at.desc())
+                        .limit(1)
                     )
-                )
-            )
-            if recent_escalation.scalar_one_or_none():
-                logger.info("Already escalated recently, skipping")
-                return
+                    last_checkin = last_checkin_result.scalar_one_or_none()
 
-            # Time to escalate
-            context = await get_context(db, user)
-            context["hours_since_response"] = hours_since
-            context["last_checkin_answered"] = False
-            # Add personalized context
-            if avg_response_minutes and avg_response_minutes > 0:
-                context["usual_response_time"] = f"{int(avg_response_minutes)} minutes"
-                context["silence_is_unusual"] = hours_since > (avg_response_minutes * 2 / 60)
-            else:
-                context["usual_response_time"] = "unknown"
-                context["silence_is_unusual"] = False
+                    if not last_checkin:
+                        logger.info(f"No check-ins found for user {user.id}, skipping silence detection")
+                        continue
 
-            message = await generate_message("escalation", context)
-            msg_id = await telegram_service.send_escalation(message)
+                    # If last check-in was answered, no escalation needed
+                    if last_checkin.response_received:
+                        logger.info(f"Last check-in was answered for user {user.id}, no escalation needed")
+                        continue
 
-            # Record escalation
-            checkin = CheckIn(
-                user_id=user.id,
-                check_in_type=CheckInType.ESCALATION,
-                message_sent=message,
-                telegram_message_id=msg_id,
-            )
-            db.add(checkin)
+                    # Calculate hours since last check-in
+                    # Ensure sent_at is naive (no timezone) for subtraction
+                    sent_at = last_checkin.sent_at
+                    if hasattr(sent_at, 'tzinfo') and sent_at.tzinfo is not None:
+                        sent_at = sent_at.replace(tzinfo=None)
+                    hours_since = (datetime.utcnow() - sent_at).total_seconds() / 3600
 
-            # Save to chat history
-            chat_msg = ChatMessage(
-                user_id=user.id,
-                role="warden",
-                content=message,
-                message_type="escalation",
-                telegram_message_id=msg_id,
-            )
-            db.add(chat_msg)
+                    # ENHANCED: Calculate personalized threshold based on user's typical response time
+                    avg_response_result = await db.execute(
+                        select(func.avg(ResponseTiming.response_time_minutes)).where(
+                            and_(
+                                ResponseTiming.user_id == user.id,
+                                ResponseTiming.did_respond == True,
+                            )
+                        )
+                    )
+                    avg_response_minutes = avg_response_result.scalar()
+
+                    # Use personalized threshold if we have enough data, otherwise use default
+                    if avg_response_minutes and avg_response_minutes > 0:
+                        # If they usually respond in X minutes, alert after 3x that time (minimum 2 hours)
+                        personalized_threshold_hours = max(2, (avg_response_minutes * 3) / 60)
+                        # But don't exceed the configured maximum
+                        threshold_hours = min(personalized_threshold_hours, settings.silence_threshold_hours)
+                        logger.info(f"Using personalized silence threshold for user {user.id}: {threshold_hours:.1f}h (avg response: {avg_response_minutes:.0f}min)")
+                    else:
+                        threshold_hours = settings.silence_threshold_hours
+
+                    if hours_since < threshold_hours:
+                        logger.info(f"Only {hours_since:.1f} hours since last check-in for user {user.id}, under threshold ({threshold_hours:.1f}h)")
+                        continue
+
+                    # Check if we already escalated recently (within 12 hours) for this user
+                    twelve_hours_ago = datetime.utcnow() - timedelta(hours=12)
+                    recent_escalation = await db.execute(
+                        select(CheckIn).where(
+                            and_(
+                                CheckIn.user_id == user.id,
+                                CheckIn.check_in_type == CheckInType.ESCALATION,
+                                CheckIn.sent_at > twelve_hours_ago,
+                            )
+                        )
+                    )
+                    if recent_escalation.scalar_one_or_none():
+                        logger.info(f"Already escalated recently for user {user.id}, skipping")
+                        continue
+
+                    # Time to escalate
+                    context = await get_context(db, user)
+                    context["hours_since_response"] = hours_since
+                    context["last_checkin_answered"] = False
+                    # Add personalized context
+                    if avg_response_minutes and avg_response_minutes > 0:
+                        context["usual_response_time"] = f"{int(avg_response_minutes)} minutes"
+                        context["silence_is_unusual"] = hours_since > (avg_response_minutes * 2 / 60)
+                    else:
+                        context["usual_response_time"] = "unknown"
+                        context["silence_is_unusual"] = False
+
+                    message = await generate_message("escalation", context)
+                    msg_id = await telegram_service.send_escalation(message, chat_id=user.telegram_chat_id)
+
+                    # Record escalation
+                    checkin = CheckIn(
+                        user_id=user.id,
+                        check_in_type=CheckInType.ESCALATION,
+                        message_sent=message,
+                        telegram_message_id=msg_id,
+                    )
+                    db.add(checkin)
+
+                    # Save to chat history
+                    chat_msg = ChatMessage(
+                        user_id=user.id,
+                        role="warden",
+                        content=message,
+                        message_type="escalation",
+                        telegram_message_id=msg_id,
+                    )
+                    db.add(chat_msg)
+
+                    logger.info(f"Escalation sent to user {user.id} after {hours_since:.1f} hours of silence")
+
+                except Exception as user_error:
+                    logger.error(f"Silence detection failed for user {user.id}: {user_error}", exc_info=True)
+                    await log_scheduler_error("silence_detector", user_error, user.id)
+                    continue
 
             await db.commit()
-
-            logger.info(f"Escalation sent after {hours_since:.1f} hours of silence")
+            logger.info("Silence detector job completed")
 
         except Exception as e:
             logger.error(f"Silence detector failed: {e}", exc_info=True)
@@ -563,10 +581,14 @@ async def commitment_reminder_job():
 
     async with async_session_maker() as db:
         try:
-            # Get the default user for multi-user support
-            user = await get_default_user(db)
+            # Get all active users
+            users = await get_all_active_users(db)
+            if not users:
+                logger.warning("No active users found, skipping commitment reminders")
+                return
 
             import pytz
+            import random
             tz = pytz.timezone(settings.timezone)
             now = datetime.now(tz)
             # Convert to naive UTC for database comparison
@@ -576,74 +598,83 @@ async def commitment_reminder_job():
             reminder_start = now_utc + timedelta(minutes=75)
             reminder_end = now_utc + timedelta(minutes=105)
 
-            result = await db.execute(
-                select(Commitment).where(
-                    and_(
-                        Commitment.status == CommitmentStatus.PENDING,
-                        Commitment.due_date.isnot(None),
-                        Commitment.due_date >= reminder_start,
-                        Commitment.due_date <= reminder_end,
-                    )
-                )
-            )
-            upcoming = result.scalars().all()
-
-            for commitment in upcoming:
-                # Check if we already sent a reminder for this commitment
-                two_hours_ago = datetime.utcnow() - timedelta(hours=2)
-                recent_reminder = await db.execute(
-                    select(CheckIn).where(
-                        and_(
-                            CheckIn.check_in_type == CheckInType.DEADLINE_REMINDER,
-                            CheckIn.sent_at > two_hours_ago,
-                            CheckIn.message_sent.contains(commitment.title),
+            for user in users:
+                try:
+                    result = await db.execute(
+                        select(Commitment).where(
+                            and_(
+                                Commitment.user_id == user.id,
+                                Commitment.status == CommitmentStatus.PENDING,
+                                Commitment.due_date.isnot(None),
+                                Commitment.due_date >= reminder_start,
+                                Commitment.due_date <= reminder_end,
+                            )
                         )
                     )
-                )
-                if recent_reminder.scalar_one_or_none():
+                    upcoming = result.scalars().all()
+
+                    for commitment in upcoming:
+                        # Check if we already sent a reminder for this commitment for this user
+                        two_hours_ago = datetime.utcnow() - timedelta(hours=2)
+                        recent_reminder = await db.execute(
+                            select(CheckIn).where(
+                                and_(
+                                    CheckIn.user_id == user.id,
+                                    CheckIn.check_in_type == CheckInType.DEADLINE_REMINDER,
+                                    CheckIn.sent_at > two_hours_ago,
+                                    CheckIn.message_sent.contains(commitment.title),
+                                )
+                            )
+                        )
+                        if recent_reminder.scalar_one_or_none():
+                            continue
+
+                        # Calculate time until due
+                        # Ensure due_date is naive for subtraction
+                        due = commitment.due_date
+                        if hasattr(due, 'tzinfo') and due.tzinfo is not None:
+                            due = due.replace(tzinfo=None)
+                        minutes_until = (due - now_utc).total_seconds() / 60
+                        due_time_str = commitment.due_date.strftime('%I:%M %p').lstrip('0')
+
+                        # Generate a conversational reminder
+                        reminder_messages = [
+                            f"Heads up - \"{commitment.title}\" is due at {due_time_str}. That's about 90 minutes from now. Where are you on this?",
+                            f"Clock's ticking on \"{commitment.title}\" - due at {due_time_str}. You've got about 90 minutes. Status?",
+                            f"Just checking in on \"{commitment.title}\" - it's coming up at {due_time_str}. Are you on track or do we need to talk about this?",
+                        ]
+                        message = random.choice(reminder_messages)
+
+                        msg_id = await telegram_service.send_message(message, chat_id=user.telegram_chat_id)
+
+                        # Record reminder
+                        checkin = CheckIn(
+                            user_id=user.id,
+                            check_in_type=CheckInType.DEADLINE_REMINDER,
+                            message_sent=message,
+                            telegram_message_id=msg_id,
+                        )
+                        db.add(checkin)
+
+                        # Save to chat history
+                        chat_msg = ChatMessage(
+                            user_id=user.id,
+                            role="warden",
+                            content=message,
+                            message_type="deadline_reminder",
+                            telegram_message_id=msg_id,
+                        )
+                        db.add(chat_msg)
+
+                        logger.info(f"Sent 90-min reminder for user {user.id}: {commitment.title}")
+
+                except Exception as user_error:
+                    logger.error(f"Commitment reminder failed for user {user.id}: {user_error}", exc_info=True)
+                    await log_scheduler_error("commitment_reminder", user_error, user.id)
                     continue
 
-                # Calculate time until due
-                # Ensure due_date is naive for subtraction
-                due = commitment.due_date
-                if hasattr(due, 'tzinfo') and due.tzinfo is not None:
-                    due = due.replace(tzinfo=None)
-                minutes_until = (due - now_utc).total_seconds() / 60
-                due_time_str = commitment.due_date.strftime('%I:%M %p').lstrip('0')
-
-                # Generate a conversational reminder
-                reminder_messages = [
-                    f"Heads up - \"{commitment.title}\" is due at {due_time_str}. That's about 90 minutes from now. Where are you on this?",
-                    f"Clock's ticking on \"{commitment.title}\" - due at {due_time_str}. You've got about 90 minutes. Status?",
-                    f"Just checking in on \"{commitment.title}\" - it's coming up at {due_time_str}. Are you on track or do we need to talk about this?",
-                ]
-                import random
-                message = random.choice(reminder_messages)
-
-                msg_id = await telegram_service.send_message(message)
-
-                # Record reminder
-                checkin = CheckIn(
-                    user_id=user.id,
-                    check_in_type=CheckInType.DEADLINE_REMINDER,
-                    message_sent=message,
-                    telegram_message_id=msg_id,
-                )
-                db.add(checkin)
-
-                # Save to chat history
-                chat_msg = ChatMessage(
-                    user_id=user.id,
-                    role="warden",
-                    content=message,
-                    message_type="deadline_reminder",
-                    telegram_message_id=msg_id,
-                )
-                db.add(chat_msg)
-
-                logger.info(f"Sent 90-min reminder for: {commitment.title}")
-
             await db.commit()
+            logger.info("Commitment reminder job completed")
 
         except Exception as e:
             logger.error(f"Commitment reminder failed: {e}", exc_info=True)
@@ -657,78 +688,93 @@ async def deadline_alert_job():
 
     async with async_session_maker() as db:
         try:
-            # Get the default user for multi-user support
-            user = await get_default_user(db)
+            # Get all active users
+            users = await get_all_active_users(db)
+            if not users:
+                logger.warning("No active users found, skipping deadline alerts")
+                return
 
             now = datetime.utcnow()
             deadline_cutoff = now + timedelta(hours=settings.deadline_alert_hours)
+            total_processed = 0
 
-            # Find commitments with upcoming deadlines
-            result = await db.execute(
-                select(Commitment).where(
-                    and_(
-                        Commitment.status == CommitmentStatus.PENDING,
-                        Commitment.due_date.isnot(None),
-                        Commitment.due_date > now,
-                        Commitment.due_date <= deadline_cutoff,
-                    )
-                )
-            )
-            upcoming = result.scalars().all()
-
-            for commitment in upcoming:
-                # Check if we already alerted for this commitment recently
-                day_ago = datetime.utcnow() - timedelta(hours=24)
-                recent_alert = await db.execute(
-                    select(CheckIn).where(
-                        and_(
-                            CheckIn.check_in_type == CheckInType.DEADLINE_ALERT,
-                            CheckIn.sent_at > day_ago,
-                            CheckIn.message_sent.contains(commitment.title),
+            for user in users:
+                try:
+                    # Find commitments with upcoming deadlines for this user
+                    result = await db.execute(
+                        select(Commitment).where(
+                            and_(
+                                Commitment.user_id == user.id,
+                                Commitment.status == CommitmentStatus.PENDING,
+                                Commitment.due_date.isnot(None),
+                                Commitment.due_date > now,
+                                Commitment.due_date <= deadline_cutoff,
+                            )
                         )
                     )
-                )
-                if recent_alert.scalar_one_or_none():
+                    upcoming = result.scalars().all()
+
+                    for commitment in upcoming:
+                        # Check if we already alerted for this commitment recently for this user
+                        day_ago = datetime.utcnow() - timedelta(hours=24)
+                        recent_alert = await db.execute(
+                            select(CheckIn).where(
+                                and_(
+                                    CheckIn.user_id == user.id,
+                                    CheckIn.check_in_type == CheckInType.DEADLINE_ALERT,
+                                    CheckIn.sent_at > day_ago,
+                                    CheckIn.message_sent.contains(commitment.title),
+                                )
+                            )
+                        )
+                        if recent_alert.scalar_one_or_none():
+                            continue
+
+                        # Ensure both datetimes are naive for subtraction
+                        due = commitment.due_date.replace(tzinfo=None) if commitment.due_date.tzinfo else commitment.due_date
+                        now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+                        hours_until = (due - now_naive).total_seconds() / 3600
+
+                        context = await get_context(db, user)
+                        context["deadline_commitment"] = {
+                            "id": commitment.id,
+                            "title": commitment.title,
+                            "due_date": commitment.due_date.isoformat(),
+                            "deferred_count": commitment.deferred_count,
+                        }
+                        context["hours_until_due"] = round(hours_until, 1)
+
+                        message = await generate_message("deadline_alert", context)
+                        msg_id = await telegram_service.send_deadline_alert(message, chat_id=user.telegram_chat_id)
+
+                        # Record alert
+                        checkin = CheckIn(
+                            user_id=user.id,
+                            check_in_type=CheckInType.DEADLINE_ALERT,
+                            message_sent=message,
+                            telegram_message_id=msg_id,
+                        )
+                        db.add(checkin)
+
+                        # Save to chat history
+                        chat_msg = ChatMessage(
+                            user_id=user.id,
+                            role="warden",
+                            content=message,
+                            message_type="deadline_alert",
+                            telegram_message_id=msg_id,
+                        )
+                        db.add(chat_msg)
+
+                        total_processed += 1
+
+                except Exception as user_error:
+                    logger.error(f"Deadline alert failed for user {user.id}: {user_error}", exc_info=True)
+                    await log_scheduler_error("deadline_alert", user_error, user.id)
                     continue
 
-                # Ensure both datetimes are naive for subtraction
-                due = commitment.due_date.replace(tzinfo=None) if commitment.due_date.tzinfo else commitment.due_date
-                now_naive = now.replace(tzinfo=None) if now.tzinfo else now
-                hours_until = (due - now_naive).total_seconds() / 3600
-
-                context = await get_context(db, user)
-                context["deadline_commitment"] = {
-                    "id": commitment.id,
-                    "title": commitment.title,
-                    "due_date": commitment.due_date.isoformat(),
-                    "deferred_count": commitment.deferred_count,
-                }
-                context["hours_until_due"] = round(hours_until, 1)
-
-                message = await generate_message("deadline_alert", context)
-                msg_id = await telegram_service.send_deadline_alert(message)
-
-                # Record alert
-                checkin = CheckIn(
-                    user_id=user.id,
-                    check_in_type=CheckInType.DEADLINE_ALERT,
-                    message_sent=message,
-                    telegram_message_id=msg_id,
-                )
-                db.add(checkin)
-
-                # Save to chat history
-                chat_msg = ChatMessage(
-                    user_id=user.id,
-                    role="warden",
-                    content=message,
-                    message_type="deadline_alert",
-                    telegram_message_id=msg_id,
-                )
-                db.add(chat_msg)
-
             await db.commit()
-            logger.info(f"Processed {len(upcoming)} upcoming deadlines")
+            logger.info(f"Deadline alert job completed, processed {total_processed} upcoming deadlines")
 
         except Exception as e:
             logger.error(f"Deadline alert failed: {e}", exc_info=True)
