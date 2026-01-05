@@ -9,6 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.database import async_session_maker
 from app.db_models import (
@@ -272,7 +273,7 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     # Get recent GitHub activity for this user
     github_commits_result = await db.execute(
         select(GitHubCommit)
-        .join(GitHubRepo)
+        .options(selectinload(GitHubCommit.repo))
         .where(GitHubCommit.user_id == user.id)
         .order_by(GitHubCommit.committed_at.desc())
         .limit(20)
