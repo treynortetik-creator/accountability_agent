@@ -1091,6 +1091,11 @@ async def send_chat_message(
     from app.streaks import update_response_streak
     import pytz
 
+    # Get the default user for dashboard chat
+    user = await get_default_user(db)
+    if not user:
+        raise HTTPException(status_code=500, detail="No user configured")
+
     message_text = request.message.strip()
     if not message_text:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -1100,6 +1105,7 @@ async def send_chat_message(
 
     # Save user message to chat history
     user_chat_msg = ChatMessage(
+        user_id=user.id,
         role="user",
         content=message_text,
         message_type="reply",
@@ -1110,10 +1116,11 @@ async def send_chat_message(
     user_message_id = user_chat_msg.id
 
     # Check if this is a completion phrase ("done", "shipped", etc.)
-    handled, reply = await try_handle_completion(db, message_text)
+    handled, reply = await try_handle_completion(db, message_text, user)
     if handled:
         if reply:
             warden_chat_msg = ChatMessage(
+                user_id=user.id,
                 role="warden",
                 content=reply,
                 message_type="completion",
@@ -1129,10 +1136,11 @@ async def send_chat_message(
             )
 
     # Check if this is a confirmation response to a pending commitment
-    handled, reply = await handle_pending_confirmation(db, message_text)
+    handled, reply = await handle_pending_confirmation(db, message_text, user)
     if handled:
         if reply:
             warden_chat_msg = ChatMessage(
+                user_id=user.id,
                 role="warden",
                 content=reply,
                 message_type="commitment_confirm",
@@ -1155,6 +1163,7 @@ async def send_chat_message(
     if parsed_commitment:
         if commit_reply:
             warden_chat_msg = ChatMessage(
+                user_id=user.id,
                 role="warden",
                 content=commit_reply,
                 message_type="commitment_confirm",
@@ -1172,6 +1181,7 @@ async def send_chat_message(
     # Find the most recent unanswered check-in
     recent_checkin = await db.execute(
         select(CheckIn)
+        .where(CheckIn.user_id == user.id)
         .where(CheckIn.response_received == False)
         .order_by(CheckIn.sent_at.desc())
         .limit(1)
@@ -1181,6 +1191,7 @@ async def send_chat_message(
     # Calculate days since last shipped
     last_shipped = await db.execute(
         select(Commitment)
+        .where(Commitment.user_id == user.id)
         .where(Commitment.status == CommitmentStatus.COMPLETED)
         .order_by(Commitment.completed_at.desc())
         .limit(1)
@@ -1308,6 +1319,7 @@ async def send_chat_message(
 
     # Save warden reply to chat history
     warden_chat_msg = ChatMessage(
+        user_id=user.id,
         role="warden",
         content=reply,
         message_type="reply",
