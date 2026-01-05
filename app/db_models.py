@@ -15,7 +15,8 @@ from sqlalchemy import (
     Enum as SQLEnum,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON
 from sqlalchemy.orm import relationship, declarative_base
 import enum
 
@@ -189,7 +190,7 @@ class Pattern(Base):
         Text, nullable=False
     )  # avoidance, silence, excuse, consistency
     description = Column(Text, nullable=False)
-    evidence = Column(JSONB, nullable=True)  # Structured supporting data
+    evidence = Column(JSON, nullable=True)  # Structured supporting data
     severity = Column(Integer, default=1)  # 1-5 scale
     detected_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)  # Still relevant?
@@ -291,7 +292,7 @@ class PendingCommitmentParse(Base):
     parsed_description = Column(Text, nullable=True)
     confirmation_message_id = Column(Text, nullable=True)
     status = Column(Text, default="pending")  # pending, confirmed, rejected, breakdown_pending
-    suggested_breakdown = Column(JSONB, nullable=True)  # JSON array of breakdown steps
+    suggested_breakdown = Column(JSON, nullable=True)  # JSON array of breakdown steps
     is_large = Column(Boolean, default=False)  # Whether this was flagged as a large commitment
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)  # Auto-expire after some time
@@ -385,7 +386,7 @@ class ErrorLog(Base):
     error_type = Column(Text, nullable=False)  # Exception class name
     error_message = Column(Text, nullable=False)
     stack_trace = Column(Text, nullable=True)
-    context = Column(JSONB, nullable=True)  # JSON with additional context
+    context = Column(JSON, nullable=True)  # JSON with additional context
     source = Column(Text, nullable=True)  # webhook, scheduler, etc.
     user_message = Column(Text, nullable=True)  # The message that triggered the error
     resolved = Column(Boolean, default=False)
@@ -425,7 +426,7 @@ class WeeklyInsight(Base):
     week_start = Column(DateTime, nullable=False)
     week_end = Column(DateTime, nullable=False)
     summary = Column(Text, nullable=True)  # LLM-generated summary
-    metrics = Column(JSONB, nullable=True)  # JSON with metrics data
+    metrics = Column(JSON, nullable=True)  # JSON with metrics data
     sent_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
