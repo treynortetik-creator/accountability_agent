@@ -1078,11 +1078,16 @@ async def github_poll_job():
 
                             # Store new commits (avoid duplicates by checking committed_at + message)
                             for commit_data in commits:
+                                # Convert timezone-aware datetime to naive (UTC) for database storage
+                                committed_at = commit_data["committed_at"]
+                                if committed_at.tzinfo is not None:
+                                    committed_at = committed_at.replace(tzinfo=None)
+
                                 # Check if commit already exists
                                 existing = await db.execute(
                                     select(GitHubCommit).where(
                                         GitHubCommit.repo_id == repo.id,
-                                        GitHubCommit.committed_at == commit_data["committed_at"],
+                                        GitHubCommit.committed_at == committed_at,
                                         GitHubCommit.commit_message == commit_data["message"]
                                     )
                                 )
@@ -1093,7 +1098,7 @@ async def github_poll_job():
                                     user_id=user.id,
                                     repo_id=repo.id,
                                     commit_message=commit_data["message"],
-                                    committed_at=commit_data["committed_at"],
+                                    committed_at=committed_at,
                                 )
                                 db.add(new_commit)
 
