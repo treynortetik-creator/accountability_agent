@@ -811,6 +811,154 @@ async def clear_memory(
     return {"status": "cleared"}
 
 
+# =============================================================================
+# User Profile Endpoints
+# =============================================================================
+
+class UserProfileUpdate(BaseModel):
+    """Full user profile update from dashboard."""
+    personal: List[str] = []
+    work: List[str] = []
+    health: List[str] = []
+    other: List[str] = []
+
+
+class LLMProfileUpdate(BaseModel):
+    """Guarded profile update from the LLM with strict limits."""
+    section: str  # personal, work, health, or other
+    action: str  # add, update, or remove
+    old_value: Optional[str] = None  # For update/remove - the existing item
+    new_value: Optional[str] = None  # For add/update - the new item text
+
+
+@router.get("/user-profile")
+async def get_user_profile(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Get the current user profile."""
+    user = await get_default_user(db)
+    result = await db.execute(
+        select(Settings).where(Settings.user_id == user.id, Settings.key == "user_profile")
+    )
+    setting = result.scalar_one_or_none()
+
+    if setting:
+        try:
+            profile = json.loads(setting.value)
+        except json.JSONDecodeError:
+            profile = {"personal": [], "work": [], "health": [], "other": []}
+    else:
+        profile = {"personal": [], "work": [], "health": [], "other": []}
+
+    return {"profile": profile}
+
+
+@router.put("/user-profile")
+async def update_user_profile(
+    update: UserProfileUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Update the full user profile (manual dashboard update)."""
+    user = await get_default_user(db)
+
+    profile = {
+        "personal": update.personal,
+        "work": update.work,
+        "health": update.health,
+        "other": update.other,
+    }
+
+    await set_setting(db, "user_profile", json.dumps(profile), user)
+    await db.commit()
+
+    return {"status": "updated", "profile": profile}
+
+
+@router.post("/user-profile/llm-update")
+async def llm_update_user_profile(
+    update: LLMProfileUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """Guarded profile update endpoint for LLM with strict limits.
+
+    Guardrails enforced:
+    - Only ONE section can be modified per call
+    - Changes limited to ~100 characters
+    - Only add, update, or remove actions allowed
+    - Remove requires exact match of existing item
+    """
+    user = await get_default_user(db)
+
+    # Validate section
+    valid_sections = ["personal", "work", "health", "other"]
+    if update.section not in valid_sections:
+        return {"status": "error", "error": f"Invalid section. Must be one of: {valid_sections}"}
+
+    # Validate action
+    valid_actions = ["add", "update", "remove"]
+    if update.action not in valid_actions:
+        return {"status": "error", "error": f"Invalid action. Must be one of: {valid_actions}"}
+
+    # Validate character limit for new values
+    if update.new_value and len(update.new_value) > 150:
+        return {"status": "error", "error": "New value exceeds 150 character limit"}
+
+    # Get current profile
+    result = await db.execute(
+        select(Settings).where(Settings.user_id == user.id, Settings.key == "user_profile")
+    )
+    setting = result.scalar_one_or_none()
+
+    if setting:
+        try:
+            profile = json.loads(setting.value)
+        except json.JSONDecodeError:
+            profile = {"personal": [], "work": [], "health": [], "other": []}
+    else:
+        profile = {"personal": [], "work": [], "health": [], "other": []}
+
+    # Ensure section exists
+    if update.section not in profile:
+        profile[update.section] = []
+
+    section_items = profile[update.section]
+
+    # Apply the update
+    if update.action == "add":
+        if not update.new_value:
+            return {"status": "error", "error": "new_value required for add action"}
+        if update.new_value not in section_items:
+            section_items.append(update.new_value)
+
+    elif update.action == "update":
+        if not update.old_value or not update.new_value:
+            return {"status": "error", "error": "Both old_value and new_value required for update action"}
+        try:
+            idx = section_items.index(update.old_value)
+            section_items[idx] = update.new_value
+        except ValueError:
+            return {"status": "error", "error": f"old_value not found in {update.section}"}
+
+    elif update.action == "remove":
+        if not update.old_value:
+            return {"status": "error", "error": "old_value required for remove action"}
+        try:
+            section_items.remove(update.old_value)
+        except ValueError:
+            return {"status": "error", "error": f"old_value not found in {update.section}"}
+
+    profile[update.section] = section_items
+
+    # Save updated profile
+    await set_setting(db, "user_profile", json.dumps(profile), user)
+    await db.commit()
+
+    return {"status": "updated", "section": update.section, "action": update.action}
+
+
 @router.get("/chat-history-count")
 async def get_chat_history_count(
     db: AsyncSession = Depends(get_db),
@@ -1254,6 +1402,63 @@ async def send_chat_message(
                 memory_setting.value = new_memory
             else:
                 db.add(Settings(user_id=user.id, key="llm_memory", value=new_memory))
+
+    # Process profile update if provided
+    profile_update = analysis.get("profile_update")
+    if profile_update and isinstance(profile_update, dict):
+        section = profile_update.get("section")
+        action = profile_update.get("action")
+        old_value = profile_update.get("old_value")
+        new_value = profile_update.get("new_value")
+
+        valid_sections = ["personal", "work", "health", "other"]
+        valid_actions = ["add", "update", "remove"]
+
+        if section in valid_sections and action in valid_actions:
+            # Get current profile
+            profile_result = await db.execute(
+                select(Settings).where(Settings.user_id == user.id, Settings.key == "user_profile")
+            )
+            profile_setting = profile_result.scalar_one_or_none()
+
+            if profile_setting:
+                try:
+                    profile = json.loads(profile_setting.value)
+                except json.JSONDecodeError:
+                    profile = {"personal": [], "work": [], "health": [], "other": []}
+            else:
+                profile = {"personal": [], "work": [], "health": [], "other": []}
+
+            if section not in profile:
+                profile[section] = []
+
+            section_items = profile[section]
+
+            # Apply guardrails: max 150 chars for new values
+            if new_value and len(new_value) > 150:
+                new_value = new_value[:150]
+
+            if action == "add" and new_value and new_value not in section_items:
+                section_items.append(new_value)
+            elif action == "update" and old_value and new_value:
+                try:
+                    idx = section_items.index(old_value)
+                    section_items[idx] = new_value
+                except ValueError:
+                    pass  # Old value not found, skip
+            elif action == "remove" and old_value:
+                try:
+                    section_items.remove(old_value)
+                except ValueError:
+                    pass  # Old value not found, skip
+
+            profile[section] = section_items
+
+            # Save updated profile
+            if profile_setting:
+                profile_setting.value = json.dumps(profile)
+            else:
+                db.add(Settings(user_id=user.id, key="user_profile", value=json.dumps(profile)))
 
     # Process scheduled follow-up if provided
     followup = analysis.get("schedule_followup")

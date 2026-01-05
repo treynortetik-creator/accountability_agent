@@ -491,6 +491,69 @@ async def telegram_webhook(request: Request):
                         db.add(SettingsModel(user_id=user.id, key="llm_memory", value=new_memory))
                     logger.info("LLM memory updated")
 
+            # Process profile update if provided
+            profile_update = analysis.get("profile_update")
+            if profile_update and isinstance(profile_update, dict):
+                section = profile_update.get("section")
+                action = profile_update.get("action")
+                old_value = profile_update.get("old_value")
+                new_value = profile_update.get("new_value")
+
+                valid_sections = ["personal", "work", "health", "other"]
+                valid_actions = ["add", "update", "remove"]
+
+                if section in valid_sections and action in valid_actions:
+                    # Get current profile
+                    profile_result = await db.execute(
+                        select(SettingsModel).where(
+                            SettingsModel.user_id == user.id,
+                            SettingsModel.key == "user_profile"
+                        )
+                    )
+                    profile_setting = profile_result.scalar_one_or_none()
+
+                    if profile_setting:
+                        try:
+                            profile = json.loads(profile_setting.value)
+                        except json.JSONDecodeError:
+                            profile = {"personal": [], "work": [], "health": [], "other": []}
+                    else:
+                        profile = {"personal": [], "work": [], "health": [], "other": []}
+
+                    if section not in profile:
+                        profile[section] = []
+
+                    section_items = profile[section]
+
+                    # Apply guardrails: max 150 chars for new values
+                    if new_value and len(new_value) > 150:
+                        new_value = new_value[:150]
+
+                    if action == "add" and new_value and new_value not in section_items:
+                        section_items.append(new_value)
+                        logger.info(f"Added to user profile [{section}]: {new_value[:50]}...")
+                    elif action == "update" and old_value and new_value:
+                        try:
+                            idx = section_items.index(old_value)
+                            section_items[idx] = new_value
+                            logger.info(f"Updated user profile [{section}]: {new_value[:50]}...")
+                        except ValueError:
+                            pass  # Old value not found, skip
+                    elif action == "remove" and old_value:
+                        try:
+                            section_items.remove(old_value)
+                            logger.info(f"Removed from user profile [{section}]: {old_value[:50]}...")
+                        except ValueError:
+                            pass  # Old value not found, skip
+
+                    profile[section] = section_items
+
+                    # Save updated profile
+                    if profile_setting:
+                        profile_setting.value = json.dumps(profile)
+                    else:
+                        db.add(SettingsModel(user_id=user.id, key="user_profile", value=json.dumps(profile)))
+
             # Process scheduled follow-up if provided (with guardrails)
             followup = analysis.get("schedule_followup")
             if followup and isinstance(followup, dict) and followup.get("topic"):

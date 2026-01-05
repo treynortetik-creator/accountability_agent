@@ -1613,9 +1613,59 @@ h4 { font-size: 1rem; }
                         <div class="form-group">
                             <textarea id="llm-memory" class="form-textarea" style="min-height: 200px;"></textarea>
                         </div>
-                        <div style="display: flex; gap: 8px;">
+                        <div style="display: flex; gap: 8px; margin-bottom: 24px;">
                             <button class="btn btn-primary" onclick="saveMemory()">Save Memory</button>
                             <button class="btn btn-secondary" onclick="clearMemory()">Clear All</button>
+                        </div>
+
+                        <!-- User Profile Sub-section -->
+                        <div style="border-top: 1px solid var(--chrome); padding-top: 16px;">
+                            <h4 style="color: var(--smoke); font-size: 0.875rem; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                                <i class="ph-bold ph-user-circle"></i> User Information
+                            </h4>
+                            <p style="color: var(--ash); font-size: 0.75rem; margin-bottom: 16px;">
+                                Personal facts the Warden knows about you. Updates silently during conversations.
+                            </p>
+
+                            <!-- Personal Section -->
+                            <div class="profile-section" style="margin-bottom: 12px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <label style="font-size: 0.8125rem; color: var(--smoke); font-weight: 600;">Personal</label>
+                                    <button class="btn btn-secondary" style="font-size: 0.6875rem; padding: 4px 8px;" onclick="addProfileItem('personal')">+ Add</button>
+                                </div>
+                                <div id="profile-personal" class="profile-items" style="display: flex; flex-direction: column; gap: 4px;"></div>
+                            </div>
+
+                            <!-- Work Section -->
+                            <div class="profile-section" style="margin-bottom: 12px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <label style="font-size: 0.8125rem; color: var(--smoke); font-weight: 600;">Work</label>
+                                    <button class="btn btn-secondary" style="font-size: 0.6875rem; padding: 4px 8px;" onclick="addProfileItem('work')">+ Add</button>
+                                </div>
+                                <div id="profile-work" class="profile-items" style="display: flex; flex-direction: column; gap: 4px;"></div>
+                            </div>
+
+                            <!-- Health Section -->
+                            <div class="profile-section" style="margin-bottom: 12px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <label style="font-size: 0.8125rem; color: var(--smoke); font-weight: 600;">Health</label>
+                                    <button class="btn btn-secondary" style="font-size: 0.6875rem; padding: 4px 8px;" onclick="addProfileItem('health')">+ Add</button>
+                                </div>
+                                <div id="profile-health" class="profile-items" style="display: flex; flex-direction: column; gap: 4px;"></div>
+                            </div>
+
+                            <!-- Other Section -->
+                            <div class="profile-section" style="margin-bottom: 12px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <label style="font-size: 0.8125rem; color: var(--smoke); font-weight: 600;">Other</label>
+                                    <button class="btn btn-secondary" style="font-size: 0.6875rem; padding: 4px 8px;" onclick="addProfileItem('other')">+ Add</button>
+                                </div>
+                                <div id="profile-other" class="profile-items" style="display: flex; flex-direction: column; gap: 4px;"></div>
+                            </div>
+
+                            <div style="display: flex; gap: 8px; margin-top: 16px;">
+                                <button class="btn btn-primary" onclick="saveUserProfile()">Save Profile</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2357,6 +2407,7 @@ function toggleMemoryPanel() {
     if (panel.style.display === 'none') {
         panel.style.display = 'block';
         icon.textContent = '▲';
+        loadUserProfile();  // Load user profile when panel opens
     } else {
         panel.style.display = 'none';
         icon.textContent = '▼';
@@ -2377,6 +2428,72 @@ async function clearMemory() {
     if (result) {
         document.getElementById('llm-memory').value = '';
         showToast('Memory cleared');
+    }
+}
+
+// User Profile Functions
+let userProfile = { personal: [], work: [], health: [], other: [] };
+
+async function loadUserProfile() {
+    const result = await api('GET', '/settings/user-profile');
+    if (result && result.profile) {
+        userProfile = result.profile;
+        renderUserProfile();
+    }
+}
+
+function renderUserProfile() {
+    const sections = ['personal', 'work', 'health', 'other'];
+    sections.forEach(section => {
+        const container = document.getElementById(`profile-${section}`);
+        if (!container) return;
+
+        const items = userProfile[section] || [];
+        if (items.length === 0) {
+            container.innerHTML = '<span style="color: var(--ash); font-size: 0.75rem; font-style: italic;">No items yet</span>';
+        } else {
+            container.innerHTML = items.map((item, idx) => `
+                <div style="display: flex; align-items: center; gap: 8px; background: var(--midnight); padding: 8px 12px; border-radius: 4px;">
+                    <input type="text" value="${escapeHtml(item)}"
+                           style="flex: 1; background: transparent; border: none; color: var(--smoke); font-size: 0.8125rem; outline: none;"
+                           onchange="updateProfileItem('${section}', ${idx}, this.value)">
+                    <button onclick="removeProfileItem('${section}', ${idx})"
+                            style="background: none; border: none; color: var(--ash); cursor: pointer; padding: 2px; font-size: 1rem;"
+                            title="Remove">&#x2715;</button>
+                </div>
+            `).join('');
+        }
+    });
+}
+
+function addProfileItem(section) {
+    const item = prompt('Add new ' + section + ' info:');
+    if (item && item.trim()) {
+        if (!userProfile[section]) {
+            userProfile[section] = [];
+        }
+        userProfile[section].push(item.trim());
+        renderUserProfile();
+    }
+}
+
+function updateProfileItem(section, idx, newValue) {
+    if (userProfile[section] && userProfile[section][idx] !== undefined) {
+        userProfile[section][idx] = newValue.trim();
+    }
+}
+
+function removeProfileItem(section, idx) {
+    if (userProfile[section]) {
+        userProfile[section].splice(idx, 1);
+        renderUserProfile();
+    }
+}
+
+async function saveUserProfile() {
+    const result = await api('PUT', '/settings/user-profile', userProfile);
+    if (result) {
+        showToast('Profile saved');
     }
 }
 

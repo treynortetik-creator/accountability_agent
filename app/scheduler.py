@@ -223,6 +223,22 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     memory_setting = memory_result.scalar_one_or_none()
     llm_memory = memory_setting.value if memory_setting else ""
 
+    # Get user profile for this user
+    profile_result = await db.execute(
+        select(Settings).where(
+            Settings.user_id == user.id,
+            Settings.key == "user_profile"
+        )
+    )
+    profile_setting = profile_result.scalar_one_or_none()
+    user_profile = {}
+    if profile_setting:
+        import json
+        try:
+            user_profile = json.loads(profile_setting.value)
+        except json.JSONDecodeError:
+            user_profile = {"personal": [], "work": [], "health": [], "other": []}
+
     # Get accountability intensity (default 3 = balanced) for this user
     intensity_result = await db.execute(
         select(Settings).where(
@@ -262,6 +278,7 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
         "calendar": calendar_ctx,
         "chat_history": chat_history,
         "llm_memory": llm_memory,
+        "user_profile": user_profile,
         "accountability_intensity": accountability_intensity,
         "scheduled_followups": scheduled_followups,
     }
