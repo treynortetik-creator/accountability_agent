@@ -28,8 +28,7 @@ class ErrorLogResponse(BaseModel):
     resolved_at: Optional[str]
     created_at: str
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ErrorLogSummary(BaseModel):
@@ -40,8 +39,7 @@ class ErrorLogSummary(BaseModel):
     resolved: bool
     created_at: str
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ErrorStats(BaseModel):

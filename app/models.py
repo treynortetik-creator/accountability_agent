@@ -37,8 +37,7 @@ class GoalResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============ Commitment Models ============
@@ -77,8 +76,7 @@ class CommitmentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============ Check-In Models ============
@@ -94,8 +92,7 @@ class CheckInResponse(BaseModel):
     response_received: bool
     responded_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============ Response Models ============
@@ -120,8 +117,7 @@ class UserResponseResponse(BaseModel):
     detected_avoidance: Optional[bool]
     analysis_notes: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============ Pattern Models ============
@@ -138,8 +134,7 @@ class PatternResponse(BaseModel):
     detected_at: datetime
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============ Stats Models ============

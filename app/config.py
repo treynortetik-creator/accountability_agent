@@ -54,9 +54,10 @@ class Settings(BaseSettings):
     gcal_client_id: str = ""
     gcal_client_secret: str = ""
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+    }
 
 
 @lru_cache()

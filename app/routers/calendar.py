@@ -145,8 +145,7 @@ class CalendarEventResponse(BaseModel):
     all_day: bool
     location: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class CalendarConnectRequest(BaseModel):

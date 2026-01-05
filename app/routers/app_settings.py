@@ -118,8 +118,7 @@ class ChatMessageResponse(BaseModel):
     message_type: Optional[str]
     created_at: str
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 async def get_setting(db: AsyncSession, key: str, default: str = "", user: User = None) -> str:
@@ -521,8 +520,7 @@ class ScheduleResponse(BaseModel):
     prompt_template: Optional[str]
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 @router.get("/schedules", response_model=List[ScheduleResponse])
