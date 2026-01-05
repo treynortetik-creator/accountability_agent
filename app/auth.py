@@ -1,5 +1,7 @@
 """Authentication for The Warden API."""
 
+import secrets
+
 from fastapi import HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from app.config import get_settings
@@ -17,7 +19,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
             detail="Missing API key. Include X-API-Key header.",
         )
 
-    if api_key != settings.api_key:
+    if not secrets.compare_digest(api_key, settings.api_key):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid API key.",
