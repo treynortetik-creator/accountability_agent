@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""  # Your personal chat ID
     telegram_webhook_url: str = ""  # e.g., https://your-app.railway.app/webhook/telegram
+    telegram_webhook_secret: str = ""  # Secret token for webhook validation
 
     # OpenRouter
     openrouter_api_key: str = ""
