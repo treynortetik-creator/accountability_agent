@@ -13,6 +13,8 @@ class Settings(BaseSettings):
 
     # Auth
     api_key: str = "change-me-in-production"
+    dashboard_password: str = ""  # Password for dashboard login (bcrypt hash stored in env)
+    dashboard_password_salt: str = ""  # Salt for password hashing
 
     # Telegram
     telegram_bot_token: str = ""

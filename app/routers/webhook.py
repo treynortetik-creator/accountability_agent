@@ -14,6 +14,7 @@ from app.scheduler import get_context
 from app.streaks import update_response_streak
 from app.config import get_settings
 from app.user_service import get_or_create_user
+from app.security import telegram_update_tracker, to_naive_utc, utc_now
 import re
 import pytz
 
@@ -81,13 +82,34 @@ async def try_handle_completion(db, message_text: str, user: User) -> tuple[bool
             )
             pending = result.scalars().all()
 
-            # Simple word overlap check
-            subject_words = set(subject.lower().split())
-            for c in pending:
-                title_words = set(c.title.lower().split())
-                if subject_words & title_words:  # Any overlap
-                    commitment = c
-                    break
+            # Improved fuzzy matching - require significant word overlap
+            # Exclude common stop words that would cause false matches
+            stop_words = {"the", "a", "an", "with", "for", "on", "to", "is", "it", "my", "i", "and", "or", "of", "in"}
+            subject_words = set(subject.lower().split()) - stop_words
+
+            if subject_words:  # Only match if there are meaningful words left
+                best_match = None
+                best_score = 0
+
+                for c in pending:
+                    title_words = set(c.title.lower().split()) - stop_words
+                    if not title_words:
+                        continue
+
+                    # Calculate overlap ratio - require at least 50% of subject words to match
+                    # or at least 40% of the title words to be covered
+                    overlap = subject_words & title_words
+                    if overlap:
+                        subject_ratio = len(overlap) / len(subject_words) if subject_words else 0
+                        title_ratio = len(overlap) / len(title_words) if title_words else 0
+                        score = max(subject_ratio, title_ratio)
+
+                        # Require at least 40% match to consider it a match
+                        if score >= 0.4 and score > best_score:
+                            best_score = score
+                            best_match = c
+
+                commitment = best_match
 
         if not commitment:
             return True, f"I don't see a commitment matching \"{subject}\". What exactly did you finish?"
@@ -313,6 +335,16 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         logger.error(f"Failed to parse webhook request: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    # Check for replay attack - Telegram update_id should be monotonically increasing
+    update_id = update_data.get("update_id")
+    if telegram_update_tracker.is_replay(update_id):
+        logger.warning(f"Replay attack detected: update_id {update_id} already processed")
+        # Return OK to prevent Telegram from retrying
+        return {"ok": True, "warning": "duplicate update ignored"}
+
+    # Mark this update as processed
+    telegram_update_tracker.mark_processed(update_id)
 
     # Parse the update
     parsed = parse_telegram_update(update_data)

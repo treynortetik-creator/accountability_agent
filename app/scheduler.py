@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.database import async_session_maker
+from app.security import to_naive_utc, utc_now
 from app.db_models import (
     Goal,
     Commitment,
@@ -101,7 +102,7 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     ]
 
     # Get recently completed (last 7 days) for this user
-    week_ago = datetime.utcnow() - timedelta(days=7)
+    week_ago = utc_now() - timedelta(days=7)
     completed_result = await db.execute(
         select(Commitment).where(
             and_(
@@ -117,7 +118,7 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     ]
 
     # Get upcoming deadlines (next 48 hours) for this user
-    now = datetime.utcnow()
+    now = utc_now()
     deadline_cutoff = now + timedelta(hours=settings.deadline_alert_hours)
     deadline_result = await db.execute(
         select(Commitment).where(
@@ -132,14 +133,13 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     )
     upcoming_deadlines = []
     for c in deadline_result.scalars().all():
-        # Ensure both datetimes are naive for subtraction
-        due = c.due_date.replace(tzinfo=None) if c.due_date.tzinfo else c.due_date
-        now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+        # Use to_naive_utc for consistent datetime handling
+        due = to_naive_utc(c.due_date)
         upcoming_deadlines.append({
             "id": c.id,
             "title": c.title,
             "due_date": c.due_date.isoformat(),
-            "hours_until": (due - now_naive).total_seconds() / 3600,
+            "hours_until": (due - now).total_seconds() / 3600,
         })
 
     # Get active patterns for this user
@@ -161,13 +161,11 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     last_responded = last_response.scalar_one_or_none()
     days_since_response = 0
     if last_responded and last_responded.responded_at:
-        responded = last_responded.responded_at
-        if hasattr(responded, 'tzinfo') and responded.tzinfo is not None:
-            responded = responded.replace(tzinfo=None)
-        days_since_response = (datetime.utcnow() - responded).days
+        responded = to_naive_utc(last_responded.responded_at)
+        days_since_response = (utc_now() - responded).days
 
     # Calculate completion rate (last 30 days) for this user
-    month_ago = datetime.utcnow() - timedelta(days=30)
+    month_ago = utc_now() - timedelta(days=30)
     total_result = await db.execute(
         select(func.count(Commitment.id)).where(
             Commitment.user_id == user.id,
@@ -291,7 +289,7 @@ async def get_context(db: AsyncSession, user: User = None) -> dict:
     days_since_commit = None
     if github_activity:
         last_commit_date = datetime.strptime(github_activity[0]["date"], "%Y-%m-%d")
-        days_since_commit = (datetime.utcnow().date() - last_commit_date.date()).days
+        days_since_commit = (utc_now().date() - last_commit_date.date()).days
 
     return {
         "goals": goals,
@@ -372,14 +370,16 @@ async def daily_checkin_job():
                     # Deactivate old patterns
                     await detector.deactivate_old_patterns()
 
+                    # Commit after each successful user to prevent partial failures
+                    await db.commit()
                     logger.info(f"Daily check-in sent to user {user.id}")
 
                 except Exception as user_error:
                     logger.error(f"Daily check-in failed for user {user.id}: {user_error}", exc_info=True)
+                    await db.rollback()  # Rollback the failed user's changes
                     await log_scheduler_error("daily_checkin", user_error, user.id)
                     continue
 
-            await db.commit()
             logger.info("Daily check-in job completed")
 
         except Exception as e:
@@ -409,7 +409,7 @@ async def weekly_review_job():
                     context = await get_context(db, user)
 
                     # Add weekly-specific stats
-                    week_ago = datetime.utcnow() - timedelta(days=7)
+                    week_ago = utc_now() - timedelta(days=7)
 
                     # Weekly completions for this user
                     completed_result = await db.execute(
@@ -476,14 +476,16 @@ async def weekly_review_job():
                     )
                     db.add(chat_msg)
 
+                    # Commit after each successful user
+                    await db.commit()
                     logger.info(f"Weekly review sent to user {user.id}")
 
                 except Exception as user_error:
                     logger.error(f"Weekly review failed for user {user.id}: {user_error}", exc_info=True)
+                    await db.rollback()
                     await log_scheduler_error("weekly_review", user_error, user.id)
                     continue
 
-            await db.commit()
             logger.info("Weekly review job completed")
 
         except Exception as e:
@@ -525,11 +527,9 @@ async def silence_detector_job():
                         continue
 
                     # Calculate hours since last check-in
-                    # Ensure sent_at is naive (no timezone) for subtraction
-                    sent_at = last_checkin.sent_at
-                    if hasattr(sent_at, 'tzinfo') and sent_at.tzinfo is not None:
-                        sent_at = sent_at.replace(tzinfo=None)
-                    hours_since = (datetime.utcnow() - sent_at).total_seconds() / 3600
+                    # Use to_naive_utc for consistent datetime handling
+                    sent_at = to_naive_utc(last_checkin.sent_at)
+                    hours_since = (utc_now() - sent_at).total_seconds() / 3600
 
                     # ENHANCED: Calculate personalized threshold based on user's typical response time
                     avg_response_result = await db.execute(
@@ -557,7 +557,7 @@ async def silence_detector_job():
                         continue
 
                     # Check if we already escalated recently (within 12 hours) for this user
-                    twelve_hours_ago = datetime.utcnow() - timedelta(hours=12)
+                    twelve_hours_ago = utc_now() - timedelta(hours=12)
                     recent_escalation = await db.execute(
                         select(CheckIn).where(
                             and_(
@@ -605,14 +605,16 @@ async def silence_detector_job():
                     )
                     db.add(chat_msg)
 
+                    # Commit after each successful user
+                    await db.commit()
                     logger.info(f"Escalation sent to user {user.id} after {hours_since:.1f} hours of silence")
 
                 except Exception as user_error:
                     logger.error(f"Silence detection failed for user {user.id}: {user_error}", exc_info=True)
+                    await db.rollback()
                     await log_scheduler_error("silence_detector", user_error, user.id)
                     continue
 
-            await db.commit()
             logger.info("Silence detector job completed")
 
         except Exception as e:
@@ -638,7 +640,7 @@ async def commitment_reminder_job():
             tz = pytz.timezone(settings.timezone)
             now = datetime.now(tz)
             # Convert to naive UTC for database comparison
-            now_utc = datetime.utcnow()
+            now_utc = utc_now()
 
             # Find commitments due in the next 90-105 minutes (15-min window to catch them)
             reminder_start = now_utc + timedelta(minutes=75)
@@ -661,7 +663,7 @@ async def commitment_reminder_job():
 
                     for commitment in upcoming:
                         # Check if we already sent a reminder for this commitment for this user
-                        two_hours_ago = datetime.utcnow() - timedelta(hours=2)
+                        two_hours_ago = utc_now() - timedelta(hours=2)
                         recent_reminder = await db.execute(
                             select(CheckIn).where(
                                 and_(
@@ -676,10 +678,8 @@ async def commitment_reminder_job():
                             continue
 
                         # Calculate time until due
-                        # Ensure due_date is naive for subtraction
-                        due = commitment.due_date
-                        if hasattr(due, 'tzinfo') and due.tzinfo is not None:
-                            due = due.replace(tzinfo=None)
+                        # Use to_naive_utc for consistent datetime handling
+                        due = to_naive_utc(commitment.due_date)
                         minutes_until = (due - now_utc).total_seconds() / 60
                         due_time_str = commitment.due_date.strftime('%I:%M %p').lstrip('0')
 
@@ -714,12 +714,15 @@ async def commitment_reminder_job():
 
                         logger.info(f"Sent 90-min reminder for user {user.id}: {commitment.title}")
 
+                    # Commit after each successful user
+                    await db.commit()
+
                 except Exception as user_error:
                     logger.error(f"Commitment reminder failed for user {user.id}: {user_error}", exc_info=True)
+                    await db.rollback()
                     await log_scheduler_error("commitment_reminder", user_error, user.id)
                     continue
 
-            await db.commit()
             logger.info("Commitment reminder job completed")
 
         except Exception as e:
@@ -740,7 +743,7 @@ async def deadline_alert_job():
                 logger.warning("No active users found, skipping deadline alerts")
                 return
 
-            now = datetime.utcnow()
+            now = utc_now()
             deadline_cutoff = now + timedelta(hours=settings.deadline_alert_hours)
             total_processed = 0
 
@@ -762,7 +765,7 @@ async def deadline_alert_job():
 
                     for commitment in upcoming:
                         # Check if we already alerted for this commitment recently for this user
-                        day_ago = datetime.utcnow() - timedelta(hours=24)
+                        day_ago = utc_now() - timedelta(hours=24)
                         recent_alert = await db.execute(
                             select(CheckIn).where(
                                 and_(
@@ -776,10 +779,9 @@ async def deadline_alert_job():
                         if recent_alert.scalar_one_or_none():
                             continue
 
-                        # Ensure both datetimes are naive for subtraction
-                        due = commitment.due_date.replace(tzinfo=None) if commitment.due_date.tzinfo else commitment.due_date
-                        now_naive = now.replace(tzinfo=None) if now.tzinfo else now
-                        hours_until = (due - now_naive).total_seconds() / 3600
+                        # Use to_naive_utc for consistent datetime handling
+                        due = to_naive_utc(commitment.due_date)
+                        hours_until = (due - now).total_seconds() / 3600
 
                         context = await get_context(db, user)
                         context["deadline_commitment"] = {
@@ -814,12 +816,15 @@ async def deadline_alert_job():
 
                         total_processed += 1
 
+                    # Commit after each successful user
+                    await db.commit()
+
                 except Exception as user_error:
                     logger.error(f"Deadline alert failed for user {user.id}: {user_error}", exc_info=True)
+                    await db.rollback()
                     await log_scheduler_error("deadline_alert", user_error, user.id)
                     continue
 
-            await db.commit()
             logger.info(f"Deadline alert job completed, processed {total_processed} upcoming deadlines")
 
         except Exception as e:
@@ -837,7 +842,7 @@ async def scheduled_followup_job():
             # Get the default user for multi-user support
             user = await get_default_user(db)
 
-            now = datetime.utcnow()
+            now = utc_now()
 
             # Find pending follow-ups that are due
             result = await db.execute(
@@ -861,7 +866,7 @@ async def scheduled_followup_job():
 
                 # Mark as sent
                 followup.status = "sent"
-                followup.sent_at = datetime.utcnow()
+                followup.sent_at = utc_now()
 
                 # Record in check-in table
                 checkin = CheckIn(
@@ -910,9 +915,9 @@ async def weekly_insights_job():
             week_start = week_end - timedelta(days=6)
             week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
-            # Convert to UTC for queries
-            week_start_utc = week_start.astimezone(pytz.UTC).replace(tzinfo=None)
-            week_end_utc = week_end.astimezone(pytz.UTC).replace(tzinfo=None)
+            # Convert to UTC for queries using to_naive_utc
+            week_start_utc = to_naive_utc(week_start)
+            week_end_utc = to_naive_utc(week_end)
 
             # Check if we already generated insights for this week
             existing = await db.execute(
@@ -993,7 +998,7 @@ async def weekly_insights_job():
                 week_end=week_end_utc,
                 summary=message,
                 metrics=json.dumps(metrics),
-                sent_at=datetime.utcnow(),
+                sent_at=utc_now(),
             )
             db.add(insight)
 
@@ -1080,9 +1085,7 @@ async def github_poll_job():
                             # Store new commits (avoid duplicates by checking committed_at + message)
                             for commit_data in commits:
                                 # Convert timezone-aware datetime to naive (UTC) for database storage
-                                committed_at = commit_data["committed_at"]
-                                if committed_at.tzinfo is not None:
-                                    committed_at = committed_at.replace(tzinfo=None)
+                                committed_at = to_naive_utc(commit_data["committed_at"])
 
                                 # Check if commit already exists
                                 existing = await db.execute(
@@ -1113,7 +1116,7 @@ async def github_poll_job():
                         except GitHubAPIError as e:
                             repo.consecutive_failures += 1
                             repo.last_error = str(e.message)
-                            repo.last_error_at = datetime.utcnow()
+                            repo.last_error_at = utc_now()
 
                             logger.warning(f"GitHub API error for {repo.repo_owner}/{repo.repo_name}: {e.message}")
 
@@ -1160,7 +1163,7 @@ async def github_cleanup_job():
                 retention_setting = retention_result.scalar_one_or_none()
                 retention_days = int(retention_setting.value) if retention_setting else 7
 
-                cutoff = datetime.utcnow() - timedelta(days=retention_days)
+                cutoff = utc_now() - timedelta(days=retention_days)
 
                 # Delete old commits
                 from sqlalchemy import delete

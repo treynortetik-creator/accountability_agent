@@ -1496,6 +1496,11 @@ h4 { font-size: 1rem; }
                     <span class="rail-label">Debug</span>
                     <span id="error-count-badge" class="badge badge-pending" style="margin-left: auto; display: none;">0</span>
                 </a>
+                <div style="flex-grow: 1;"></div>
+                <a class="rail-item" onclick="handleLogout()" style="margin-top: auto; border-top: 1px solid var(--chrome);">
+                    <span class="rail-icon"><i class="ph-bold ph-sign-out"></i></span>
+                    <span class="rail-label">Logout</span>
+                </a>
             </div>
         </nav>
 
@@ -2268,39 +2273,21 @@ function showSectionMobile(section) {
     showSection(section);
 }
 
-// TEMPORARY: Bypass login and check database status directly
+// Initialize dashboard - session auth is handled server-side
 (async function() {
-    // Show dashboard immediately without login
+    // Hide auth overlay since we're protected by session cookie now
     document.getElementById('auth-overlay').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     document.getElementById('mobile-header').style.display = '';
 
-    // Check database connection status
-    try {
-        const dbStatus = await fetch('/debug/db');
-        const dbData = await dbStatus.json();
-        if (dbData.connection === 'FAILED') {
-            showToast('Database Error: ' + dbData.error_message, 'error');
-            document.getElementById('recent-activity').innerHTML =
-                '<div style="background: #2a1a1a; border: 1px solid #ef4444; border-radius: 8px; padding: 16px; color: #ef4444;">' +
-                '<strong>Database Connection Failed</strong><br><br>' +
-                '<strong>Error:</strong> ' + dbData.error_type + '<br>' +
-                '<strong>Message:</strong> ' + dbData.error_message + '<br><br>' +
-                '<strong>URL Prefix:</strong> ' + dbData.database_url_prefix + '<br>' +
-                '<strong>Has Pooler:</strong> ' + dbData.database_url_contains_pooler + '<br>' +
-                '<strong>Port:</strong> ' + dbData.database_url_port +
-                '</div>';
-        } else {
-            showToast('Database connected!', 'success');
-            loadDashboard();
-        }
-    } catch (e) {
-        showToast('Failed to check database: ' + e.message, 'error');
+    // Load API key from localStorage for API calls
+    if (API_KEY) {
+        loadDashboard();
+    } else {
+        // If no API key stored, redirect to login
+        window.location.href = '/login';
     }
 })();
-
-// Original login code (disabled for now)
-// if (API_KEY) { document.getElementById('apiKeyInput').value = API_KEY; authenticate(); }
 
 async function api(method, endpoint, data = null) {
     try {
@@ -2327,6 +2314,11 @@ function showToast(msg, type = 'success') {
     toast.textContent = msg;
     toast.className = 'toast show ' + type;
     setTimeout(() => toast.className = 'toast', 3000);
+}
+
+function handleLogout() {
+    localStorage.removeItem('warden_api_key');
+    window.location.href = '/logout';
 }
 
 function showSection(name) {
