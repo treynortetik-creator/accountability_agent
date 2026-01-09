@@ -271,7 +271,8 @@ async def get_streaks(
 ):
     """Get current streak information."""
     from app.streaks import get_streak_context
-    return await get_streak_context(db)
+    user = await get_default_user(db)
+    return await get_streak_context(db, user)
 
 
 class CalendarCredentials(BaseModel):
