@@ -3547,6 +3547,13 @@ async function deleteSchedule(id) {
 // ========== Check-in Prompts ==========
 let currentEditingPromptType = null;
 
+// Helper to escape HTML special characters
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 async function loadPrompts() {
     const prompts = await api('GET', '/settings/prompts');
     const container = document.getElementById('prompts-list');
@@ -3561,7 +3568,8 @@ async function loadPrompts() {
         'weekly_review': 'Weekly Review',
         'escalation': 'Escalation',
         'deadline_alert': 'Deadline Alert',
-        'custom_reminder': 'Custom Reminder'
+        'custom_reminder': 'Custom Reminder',
+        'github_context': 'GitHub Context'
     };
 
     container.innerHTML = prompts.map(p => {
@@ -3569,7 +3577,8 @@ async function loadPrompts() {
         const customBadge = p.is_custom
             ? '<span class="badge badge-completed" style="margin-left: 8px;">Custom</span>'
             : '<span class="badge badge-pending" style="margin-left: 8px;">Default</span>';
-        const preview = p.prompt_template.substring(0, 100) + (p.prompt_template.length > 100 ? '...' : '');
+        const rawPreview = (p.prompt_template || '').substring(0, 100) + ((p.prompt_template || '').length > 100 ? '...' : '');
+        const preview = escapeHtml(rawPreview);
         return `<div class="list-item">
             <div style="flex: 1;">
                 <div class="list-item-title">${label} ${customBadge}</div>
@@ -3583,22 +3592,44 @@ async function loadPrompts() {
 }
 
 async function editPrompt(promptType) {
-    const result = await api('GET', `/settings/prompts/${promptType}`);
-    if (!result) return;
+    try {
+        const result = await api('GET', `/settings/prompts/${promptType}`);
+        if (!result) {
+            showToast('Failed to load prompt', 'error');
+            return;
+        }
 
-    currentEditingPromptType = promptType;
+        currentEditingPromptType = promptType;
 
-    const typeLabels = {
-        'daily_checkin': 'Morning Check-in',
-        'weekly_review': 'Weekly Review',
-        'escalation': 'Escalation',
-        'deadline_alert': 'Deadline Alert',
-        'custom_reminder': 'Custom Reminder'
-    };
+        const typeLabels = {
+            'daily_checkin': 'Morning Check-in',
+            'weekly_review': 'Weekly Review',
+            'escalation': 'Escalation',
+            'deadline_alert': 'Deadline Alert',
+            'custom_reminder': 'Custom Reminder',
+            'github_context': 'GitHub Context'
+        };
 
-    document.getElementById('edit-prompt-type').textContent = typeLabels[promptType] || promptType;
-    document.getElementById('edit-prompt-content').value = result.prompt_template;
-    document.getElementById('edit-prompt-form').style.display = 'block';
+        const typeLabel = document.getElementById('edit-prompt-type');
+        const contentArea = document.getElementById('edit-prompt-content');
+        const form = document.getElementById('edit-prompt-form');
+
+        if (!typeLabel || !contentArea || !form) {
+            console.error('Edit form elements not found');
+            showToast('Error: Form elements not found', 'error');
+            return;
+        }
+
+        typeLabel.textContent = typeLabels[promptType] || promptType;
+        contentArea.value = result.prompt_template || '';
+        form.style.display = 'block';
+
+        // Scroll the form into view
+        form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (error) {
+        console.error('Error editing prompt:', error);
+        showToast('Error loading prompt', 'error');
+    }
 }
 
 function hideEditPromptForm() {
